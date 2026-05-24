@@ -1,0 +1,19 @@
+# secrets / local config
+.env
+.env.*
+!.env.example
+.private/
+.secrets/
+
+# runtime / build
+bin/
+dist/
+build/
+coverage/
+*.log
+*.tmp
+
+# editors
+.idea/
+.vscode/
+.DS_Store
