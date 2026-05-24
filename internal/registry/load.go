@@ -8,14 +8,49 @@ import (
 )
 
 func Load(r io.Reader) (*Registry, error) {
-	var reg Registry
-	if err := yaml.NewDecoder(r).Decode(&reg); err != nil {
+	var raw registryYAML
+	if err := yaml.NewDecoder(r).Decode(&raw); err != nil {
 		return nil, err
 	}
-	if reg.SchemaVersion != 1 {
-		return nil, registryError(ErrUnsupportedSchemaVersion, "schema_version=%d", reg.SchemaVersion)
+	if raw.SchemaVersion != 1 {
+		return nil, registryError(ErrUnsupportedSchemaVersion, "schema_version=%d", raw.SchemaVersion)
 	}
-	return &reg, nil
+
+	reg := &Registry{
+		SchemaVersion: raw.SchemaVersion,
+		Backends:      make(map[string]Backend, len(raw.Backends)),
+		Models:        raw.Models,
+		Persons:       raw.Persons,
+		Profiles:      raw.Profiles,
+		Devices:       raw.Devices,
+	}
+	for id, backend := range raw.Backends {
+		if backend.APIKey != "" {
+			return nil, registryError(ErrInlineSecret, "backend=%q field=api_key", id)
+		}
+		reg.Backends[id] = Backend{
+			Type:      backend.Type,
+			Endpoint:  backend.Endpoint,
+			APIKeyRef: backend.APIKeyRef,
+		}
+	}
+	return reg, nil
+}
+
+type registryYAML struct {
+	SchemaVersion int                    `yaml:"schema_version"`
+	Backends      map[string]backendYAML `yaml:"backends"`
+	Models        map[string]Model       `yaml:"models"`
+	Persons       map[string]Person      `yaml:"persons"`
+	Profiles      map[string]Profile     `yaml:"profiles"`
+	Devices       map[string]Device      `yaml:"devices"`
+}
+
+type backendYAML struct {
+	Type      string `yaml:"type"`
+	Endpoint  string `yaml:"endpoint"`
+	APIKeyRef string `yaml:"api_key_ref"`
+	APIKey    string `yaml:"api_key"`
 }
 
 func LoadFile(path string) (*Registry, error) {

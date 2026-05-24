@@ -57,8 +57,18 @@ func TestLoadRegistryYAML(t *testing.T) {
 	if backend.APIKeyRef != "env:HERMES_API_KEY" {
 		t.Fatalf("APIKeyRef = %q, want env:HERMES_API_KEY", backend.APIKeyRef)
 	}
-	if backend.APIKey != "" {
-		t.Fatalf("fixture must not contain inline API key")
+}
+
+func TestLoadRejectsInlineBackendAPIKey(t *testing.T) {
+	_, err := registry.Load(strings.NewReader(`
+schema_version: 1
+backends:
+  local_hermes:
+    type: hermes
+    api_key: plaintext-secret
+`))
+	if !errors.Is(err, registry.ErrInlineSecret) {
+		t.Fatalf("Load() error = %v, want ErrInlineSecret", err)
 	}
 }
 

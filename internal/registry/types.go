@@ -14,7 +14,6 @@ type Backend struct {
 	Type      string `yaml:"type"`
 	Endpoint  string `yaml:"endpoint"`
 	APIKeyRef string `yaml:"api_key_ref"`
-	APIKey    string `yaml:"api_key"`
 }
 
 type Model struct {
@@ -45,8 +44,8 @@ type AliasBinding struct {
 }
 
 type ResolvedContext struct {
-	DeviceID  string
-	Alias     string
+	DeviceID string
+	Alias    string
 
 	PersonID  string
 	Person    Person
