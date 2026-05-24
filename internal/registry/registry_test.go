@@ -9,14 +9,8 @@ import (
 	"hermes-voice/internal/registry"
 )
 
-func TestLoadRejectsUnsupportedSchemaVersion(t *testing.T) {
-	_, err := registry.Load(strings.NewReader("schema_version: 999\n"))
-	if !errors.Is(err, registry.ErrUnsupportedSchemaVersion) {
-		t.Fatalf("Load() error = %v, want ErrUnsupportedSchemaVersion", err)
-	}
-}
-
-func TestLoadRegistryYAML(t *testing.T) {
+func loadFixture(t *testing.T) *registry.Registry {
+	t.Helper()
 	f, err := os.Open("../../testdata/registry.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +21,18 @@ func TestLoadRegistryYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
+	return reg
+}
+
+func TestLoadRejectsUnsupportedSchemaVersion(t *testing.T) {
+	_, err := registry.Load(strings.NewReader("schema_version: 999\n"))
+	if !errors.Is(err, registry.ErrUnsupportedSchemaVersion) {
+		t.Fatalf("Load() error = %v, want ErrUnsupportedSchemaVersion", err)
+	}
+}
+
+func TestLoadRegistryYAML(t *testing.T) {
+	reg := loadFixture(t)
 
 	if reg.SchemaVersion != 1 {
 		t.Fatalf("SchemaVersion = %d, want 1", reg.SchemaVersion)
@@ -53,5 +59,18 @@ func TestLoadRegistryYAML(t *testing.T) {
 	}
 	if backend.APIKey != "" {
 		t.Fatalf("fixture must not contain inline API key")
+	}
+}
+
+func TestResolveDefaultRegistryRoute(t *testing.T) {
+	reg := loadFixture(t)
+
+	resolved, err := reg.Resolve("phone_ha", "")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	if resolved.PersonID != "sve" || resolved.ProfileID != "default" || resolved.ModelID != "default_chat" || resolved.BackendID != "local_hermes" {
+		t.Fatalf("resolved ids = person:%q profile:%q model:%q backend:%q", resolved.PersonID, resolved.ProfileID, resolved.ModelID, resolved.BackendID)
 	}
 }

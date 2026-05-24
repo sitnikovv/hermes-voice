@@ -43,3 +43,17 @@ type AliasBinding struct {
 	Person  string `yaml:"person"`
 	Profile string `yaml:"profile"`
 }
+
+type ResolvedContext struct {
+	DeviceID  string
+	Alias     string
+
+	PersonID  string
+	Person    Person
+	ProfileID string
+	Profile   Profile
+	ModelID   string
+	Model     Model
+	BackendID string
+	Backend   Backend
+}
