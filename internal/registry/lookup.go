@@ -9,7 +9,10 @@ func (r *Registry) Resolve(deviceID string, alias string) (*ResolvedContext, err
 	personID := device.DefaultPerson
 	profileID := device.DefaultProfile
 	if alias != "" {
-		binding := device.Aliases[alias]
+		binding, ok := device.Aliases[alias]
+		if !ok {
+			return nil, registryError(ErrAliasNotFound, "device=%q alias=%q", deviceID, alias)
+		}
 		if binding.Person != "" {
 			personID = binding.Person
 		}
@@ -18,15 +21,35 @@ func (r *Registry) Resolve(deviceID string, alias string) (*ResolvedContext, err
 		}
 	}
 
-	profile := r.Profiles[profileID]
-	model := r.Models[profile.Model]
-	backend := r.Backends[model.Backend]
+	if personID == "" {
+		return nil, registryError(ErrMissingDefaultPerson, "device=%q alias=%q", deviceID, alias)
+	}
+	if profileID == "" {
+		return nil, registryError(ErrMissingDefaultProfile, "device=%q alias=%q", deviceID, alias)
+	}
+
+	person, ok := r.Persons[personID]
+	if !ok {
+		return nil, registryError(ErrPersonNotFound, "person=%q", personID)
+	}
+	profile, ok := r.Profiles[profileID]
+	if !ok {
+		return nil, registryError(ErrProfileNotFound, "profile=%q", profileID)
+	}
+	model, ok := r.Models[profile.Model]
+	if !ok {
+		return nil, registryError(ErrModelNotFound, "model=%q profile=%q", profile.Model, profileID)
+	}
+	backend, ok := r.Backends[model.Backend]
+	if !ok {
+		return nil, registryError(ErrBackendNotFound, "backend=%q model=%q", model.Backend, profile.Model)
+	}
 
 	return &ResolvedContext{
 		DeviceID:  deviceID,
 		Alias:     alias,
 		PersonID:  personID,
-		Person:    r.Persons[personID],
+		Person:    person,
 		ProfileID: profileID,
 		Profile:   profile,
 		ModelID:   profile.Model,

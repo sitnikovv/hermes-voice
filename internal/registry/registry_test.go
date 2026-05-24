@@ -90,3 +90,99 @@ func assertResolvedIDs(t *testing.T, resolved *registry.ResolvedContext, personI
 		t.Fatalf("resolved ids = person:%q profile:%q model:%q backend:%q", resolved.PersonID, resolved.ProfileID, resolved.ModelID, resolved.BackendID)
 	}
 }
+
+func TestResolveReturnsTypedLookupErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		device  string
+		alias   string
+		mutate  func(*registry.Registry)
+		wantErr error
+	}{
+		{
+			name:    "missing device",
+			device:  "missing_device",
+			wantErr: registry.ErrDeviceNotFound,
+		},
+		{
+			name:    "missing alias",
+			device:  "phone_ha",
+			alias:   "missing_alias",
+			wantErr: registry.ErrAliasNotFound,
+		},
+		{
+			name:   "missing person reference",
+			device: "phone_ha",
+			mutate: func(reg *registry.Registry) {
+				device := reg.Devices["phone_ha"]
+				device.DefaultPerson = "missing_person"
+				reg.Devices["phone_ha"] = device
+			},
+			wantErr: registry.ErrPersonNotFound,
+		},
+		{
+			name:   "missing profile reference",
+			device: "phone_ha",
+			mutate: func(reg *registry.Registry) {
+				device := reg.Devices["phone_ha"]
+				device.DefaultProfile = "missing_profile"
+				reg.Devices["phone_ha"] = device
+			},
+			wantErr: registry.ErrProfileNotFound,
+		},
+		{
+			name:   "missing model reference",
+			device: "phone_ha",
+			mutate: func(reg *registry.Registry) {
+				profile := reg.Profiles["default"]
+				profile.Model = "missing_model"
+				reg.Profiles["default"] = profile
+			},
+			wantErr: registry.ErrModelNotFound,
+		},
+		{
+			name:   "missing backend reference",
+			device: "phone_ha",
+			mutate: func(reg *registry.Registry) {
+				model := reg.Models["default_chat"]
+				model.Backend = "missing_backend"
+				reg.Models["default_chat"] = model
+			},
+			wantErr: registry.ErrBackendNotFound,
+		},
+		{
+			name:   "missing default person",
+			device: "phone_ha",
+			mutate: func(reg *registry.Registry) {
+				device := reg.Devices["phone_ha"]
+				device.DefaultPerson = ""
+				reg.Devices["phone_ha"] = device
+			},
+			wantErr: registry.ErrMissingDefaultPerson,
+		},
+		{
+			name:   "missing default profile",
+			device: "phone_ha",
+			mutate: func(reg *registry.Registry) {
+				device := reg.Devices["phone_ha"]
+				device.DefaultProfile = ""
+				reg.Devices["phone_ha"] = device
+			},
+			wantErr: registry.ErrMissingDefaultProfile,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := loadFixture(t)
+			if tt.mutate != nil {
+				tt.mutate(reg)
+			}
+
+			_, err := reg.Resolve(tt.device, tt.alias)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Resolve() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
