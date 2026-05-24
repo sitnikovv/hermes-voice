@@ -8,6 +8,15 @@ func (r *Registry) Resolve(deviceID string, alias string) (*ResolvedContext, err
 
 	personID := device.DefaultPerson
 	profileID := device.DefaultProfile
+	if alias != "" {
+		binding := device.Aliases[alias]
+		if binding.Person != "" {
+			personID = binding.Person
+		}
+		if binding.Profile != "" {
+			profileID = binding.Profile
+		}
+	}
 
 	profile := r.Profiles[profileID]
 	model := r.Models[profile.Model]

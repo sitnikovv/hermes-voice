@@ -70,7 +70,23 @@ func TestResolveDefaultRegistryRoute(t *testing.T) {
 		t.Fatalf("Resolve() error = %v", err)
 	}
 
-	if resolved.PersonID != "sve" || resolved.ProfileID != "default" || resolved.ModelID != "default_chat" || resolved.BackendID != "local_hermes" {
+	assertResolvedIDs(t, resolved, "sve", "default", "default_chat", "local_hermes")
+}
+
+func TestResolveAliasRegistryRoute(t *testing.T) {
+	reg := loadFixture(t)
+
+	resolved, err := reg.Resolve("phone_ha", "coding")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	assertResolvedIDs(t, resolved, "sve", "coding", "default_chat", "local_hermes")
+}
+
+func assertResolvedIDs(t *testing.T, resolved *registry.ResolvedContext, personID, profileID, modelID, backendID string) {
+	t.Helper()
+	if resolved.PersonID != personID || resolved.ProfileID != profileID || resolved.ModelID != modelID || resolved.BackendID != backendID {
 		t.Fatalf("resolved ids = person:%q profile:%q model:%q backend:%q", resolved.PersonID, resolved.ProfileID, resolved.ModelID, resolved.BackendID)
 	}
 }
