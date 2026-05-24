@@ -12,6 +12,9 @@ func Load(r io.Reader) (*Registry, error) {
 	if err := yaml.NewDecoder(r).Decode(&reg); err != nil {
 		return nil, err
 	}
+	if reg.SchemaVersion != 1 {
+		return nil, registryError(ErrUnsupportedSchemaVersion, "schema_version=%d", reg.SchemaVersion)
+	}
 	return &reg, nil
 }
 

@@ -1,11 +1,20 @@
 package registry_test
 
 import (
+	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"hermes-voice/internal/registry"
 )
+
+func TestLoadRejectsUnsupportedSchemaVersion(t *testing.T) {
+	_, err := registry.Load(strings.NewReader("schema_version: 999\n"))
+	if !errors.Is(err, registry.ErrUnsupportedSchemaVersion) {
+		t.Fatalf("Load() error = %v, want ErrUnsupportedSchemaVersion", err)
+	}
+}
 
 func TestLoadRegistryYAML(t *testing.T) {
 	f, err := os.Open("../../testdata/registry.yaml")
