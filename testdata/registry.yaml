@@ -1,0 +1,36 @@
+schema_version: 1
+
+backends:
+  local_hermes:
+    type: hermes
+    endpoint: http://127.0.0.1:8080
+    api_key_ref: env:HERMES_API_KEY
+
+models:
+  default_chat:
+    backend: local_hermes
+    name: hermes-default
+
+persons:
+  sve:
+    display_name: Sve
+
+profiles:
+  default:
+    person: sve
+    model: default_chat
+    system_prompt: default
+  coding:
+    person: sve
+    model: default_chat
+    system_prompt: coding
+
+devices:
+  phone_ha:
+    label: Android HA Assist
+    default_person: sve
+    default_profile: default
+    aliases:
+      coding:
+        person: sve
+        profile: coding
