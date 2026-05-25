@@ -35,12 +35,18 @@ type handler struct {
 }
 
 func (h handler) healthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (h handler) devText(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+		w.Header().Set("Allow", http.MethodPost)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
 		return
 	}
 
@@ -79,8 +85,8 @@ func (h handler) devText(w http.ResponseWriter, r *http.Request) {
 	}
 	backendResp, err := h.cfg.Backend.Invoke(r.Context(), backendReq)
 	if err != nil {
-		status, code := backendErrorStatus(err)
-		writeError(w, status, code, err.Error(), req.RequestID)
+		status, code, message := backendErrorStatus(err)
+		writeError(w, status, code, message, req.RequestID)
 		return
 	}
 	if backendResp == nil {
@@ -103,7 +109,7 @@ func (h handler) devText(w http.ResponseWriter, r *http.Request) {
 			ModelName: resolved.Model.Name,
 		},
 		Cleanup:  cleanupResponseFromResult(cleaned),
-		Usage:    backendResp.Usage,
+		Usage:    usageResponseFromBackend(backendResp.Usage),
 		Metadata: responseMetadata(backendResp.Metadata),
 	})
 }
@@ -117,6 +123,11 @@ type devTextRequest struct {
 	Metadata  map[string]string `json:"metadata"`
 }
 
+type usageResponse struct {
+	InputTokens  int `json:"input_tokens"`
+	OutputTokens int `json:"output_tokens"`
+}
+
 type devTextResponse struct {
 	RequestID string            `json:"request_id,omitempty"`
 	Status    string            `json:"status"`
@@ -124,7 +135,7 @@ type devTextResponse struct {
 	TaskID    string            `json:"task_id"`
 	Route     routeResponse     `json:"route"`
 	Cleanup   cleanupResponse   `json:"cleanup"`
-	Usage     *backend.Usage    `json:"usage"`
+	Usage     *usageResponse    `json:"usage"`
 	Metadata  map[string]string `json:"metadata"`
 }
 
@@ -157,17 +168,19 @@ func parseDevTextRequest(w http.ResponseWriter, r *http.Request) (devTextRequest
 	if err := decoder.Decode(&req); err != nil {
 		message := "malformed JSON"
 		var maxBytesErr *http.MaxBytesError
+		status := http.StatusBadRequest
 		if errors.As(err, &maxBytesErr) {
 			message = "request body too large"
+			status = http.StatusRequestEntityTooLarge
 		}
-		writeError(w, http.StatusBadRequest, "invalid_request", message, req.RequestID)
+		writeError(w, status, "invalid_request", message, req.RequestID)
 		return devTextRequest{}, "", false
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		writeError(w, http.StatusBadRequest, "invalid_request", "malformed JSON", req.RequestID)
 		return devTextRequest{}, "", false
 	}
-	if req.DeviceID == "" {
+	if strings.TrimSpace(req.DeviceID) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_request", "device_id is required", req.RequestID)
 		return devTextRequest{}, "", false
 	}
@@ -208,18 +221,18 @@ func responseMetadata(metadata map[string]string) map[string]string {
 	return copied
 }
 
-func backendErrorStatus(err error) (int, string) {
+func backendErrorStatus(err error) (int, string, string) {
 	switch {
 	case errors.Is(err, backend.ErrInvalidRequest):
-		return http.StatusBadRequest, "backend_invalid_request"
+		return http.StatusBadRequest, "backend_invalid_request", "backend request is invalid"
 	case errors.Is(err, backend.ErrUnauthorized):
-		return http.StatusUnauthorized, "backend_unauthorized"
+		return http.StatusUnauthorized, "backend_unauthorized", "backend unauthorized"
 	case errors.Is(err, backend.ErrTemporary):
-		return http.StatusServiceUnavailable, "backend_temporary"
+		return http.StatusServiceUnavailable, "backend_temporary", "backend temporarily unavailable"
 	case errors.Is(err, backend.ErrInvocationFailed):
-		return http.StatusBadGateway, "backend_invocation_failed"
+		return http.StatusBadGateway, "backend_invocation_failed", "backend invocation failed"
 	default:
-		return http.StatusInternalServerError, "internal_error"
+		return http.StatusInternalServerError, "internal_error", "internal error"
 	}
 }
 
@@ -229,6 +242,13 @@ func cleanupResponseFromResult(result cleanup.Result) cleanupResponse {
 		applied = append(applied, cleanupAppliedRuleOut{ID: rule.ID, Before: rule.Before, After: rule.After})
 	}
 	return cleanupResponse{Original: result.Original, Cleaned: result.Cleaned, Applied: applied}
+}
+
+func usageResponseFromBackend(usage *backend.Usage) *usageResponse {
+	if usage == nil {
+		return nil
+	}
+	return &usageResponse{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

@@ -26,6 +26,21 @@ func TestHealthzReturnsOK(t *testing.T) {
 	}
 }
 
+func TestHealthzRejectsUnsupportedMethod(t *testing.T) {
+	handler := NewHandler(HandlerConfig{})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/healthz", nil)
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("Allow = %q, want GET", got)
+	}
+}
+
 func TestDevTextRejectsUnsupportedMethod(t *testing.T) {
 	handler := NewHandler(HandlerConfig{})
 
@@ -35,6 +50,16 @@ func TestDevTextRejectsUnsupportedMethod(t *testing.T) {
 
 	if rec.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusMethodNotAllowed)
+	}
+	if got := rec.Header().Get("Allow"); got != http.MethodPost {
+		t.Fatalf("Allow = %q, want POST", got)
+	}
+	var got errorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if got.Error.Code != "method_not_allowed" {
+		t.Fatalf("code = %q, want method_not_allowed", got.Error.Code)
 	}
 }
 
@@ -58,6 +83,7 @@ func TestDevTextValidationErrors(t *testing.T) {
 	}{
 		{name: "malformed JSON", body: `{`, wantMsg: "malformed JSON"},
 		{name: "missing device", body: `{"input":"hello"}`, wantMsg: "device_id is required"},
+		{name: "blank device", body: `{"device_id":"   ","input":"hello"}`, wantMsg: "device_id is required"},
 		{name: "blank input", body: `{"device_id":"phone","input":"   "}`, wantMsg: "input is required"},
 		{name: "blank text", body: `{"device_id":"phone","text":"\t"}`, wantMsg: "input is required"},
 		{name: "conflicting input text", body: `{"device_id":"phone","input":"one","text":"two"}`, wantMsg: "input and text conflict"},
@@ -85,6 +111,26 @@ func TestDevTextValidationErrors(t *testing.T) {
 				t.Fatalf("message = %q, want %q", got.Error.Message, tt.wantMsg)
 			}
 		})
+	}
+}
+
+func TestDevTextRejectsOversizedBody(t *testing.T) {
+	handler := NewHandler(HandlerConfig{})
+
+	rec := httptest.NewRecorder()
+	body := `{"device_id":"phone","input":"` + strings.Repeat("x", maxRequestBodyBytes+1) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/dev/text", strings.NewReader(body))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+	var got errorResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if got.Error.Code != "invalid_request" || got.Error.Message != "request body too large" {
+		t.Fatalf("error = %#v", got.Error)
 	}
 }
 

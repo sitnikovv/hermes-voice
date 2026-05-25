@@ -2,15 +2,21 @@ package main
 
 import "testing"
 
-func TestServerConfigDefaults(t *testing.T) {
+func TestServerConfigRejectsNonLoopbackListenByDefault(t *testing.T) {
 	cfg := defaultServerConfig()
-	if cfg.RegistryPath != "testdata/registry.yaml" {
-		t.Fatalf("RegistryPath = %q", cfg.RegistryPath)
+	cfg.ListenAddr = "0.0.0.0:8081"
+
+	if err := cfg.validate(); err == nil {
+		t.Fatal("validate() error = nil, want non-loopback rejection")
 	}
-	if cfg.ListenAddr != "127.0.0.1:8081" {
-		t.Fatalf("ListenAddr = %q", cfg.ListenAddr)
-	}
-	if cfg.StaticOutput != "static dev response" {
-		t.Fatalf("StaticOutput = %q", cfg.StaticOutput)
+}
+
+func TestServerConfigAllowsNonLoopbackWhenExplicitlyEnabled(t *testing.T) {
+	cfg := defaultServerConfig()
+	cfg.ListenAddr = "0.0.0.0:8081"
+	cfg.AllowNonLoopback = true
+
+	if err := cfg.validate(); err != nil {
+		t.Fatalf("validate() error = %v, want nil", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"hermes-voice/internal/backend"
@@ -21,7 +22,7 @@ func TestDevTextMapsBackendErrors(t *testing.T) {
 		{name: "unauthorized", err: fmt.Errorf("wrapped: %w", backend.ErrUnauthorized), wantStatus: http.StatusUnauthorized, wantCode: "backend_unauthorized"},
 		{name: "temporary", err: fmt.Errorf("wrapped: %w", backend.ErrTemporary), wantStatus: http.StatusServiceUnavailable, wantCode: "backend_temporary"},
 		{name: "invocation failed", err: fmt.Errorf("wrapped: %w", backend.ErrInvocationFailed), wantStatus: http.StatusBadGateway, wantCode: "backend_invocation_failed"},
-		{name: "unexpected", err: errors.New("boom"), wantStatus: http.StatusInternalServerError, wantCode: "internal_error"},
+		{name: "unexpected", err: errors.New("https://secret.example env:SECRET boom"), wantStatus: http.StatusInternalServerError, wantCode: "internal_error"},
 	}
 
 	for _, tt := range tests {
@@ -43,6 +44,9 @@ func TestDevTextMapsBackendErrors(t *testing.T) {
 			}
 			if got.Error.Code != tt.wantCode {
 				t.Fatalf("code = %q, want %q", got.Error.Code, tt.wantCode)
+			}
+			if strings.Contains(got.Error.Message, "secret") || strings.Contains(got.Error.Message, "env:") || strings.Contains(got.Error.Message, "https://") {
+				t.Fatalf("error message leaks backend details: %q", got.Error.Message)
 			}
 		})
 	}
