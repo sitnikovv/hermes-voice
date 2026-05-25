@@ -3,6 +3,7 @@ package registry
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -20,6 +21,10 @@ func (r *Registry) Validate() error {
 	if r == nil {
 		addIssue("registry", "missing_required", "registry is required")
 		return validationResult(issues)
+	}
+
+	if r.SchemaVersion != 1 {
+		addIssue("schema_version", "unsupported_schema_version", fmt.Sprintf("schema_version must be 1, got %d", r.SchemaVersion))
 	}
 
 	if len(r.Backends) == 0 {
@@ -41,12 +46,12 @@ func (r *Registry) Validate() error {
 	for id, backend := range r.Backends {
 		base := "backends." + id
 		validateTopLevelID(addIssue, base, id)
-		if backend.Type == "" {
+		if isBlank(backend.Type) {
 			addIssue(base+".type", "missing_required", "type is required")
 		} else if backend.Type != "hermes" {
 			addIssue(base+".type", "unknown_backend_type", "backend type must be hermes")
 		}
-		if backend.Type == "hermes" && backend.Endpoint == "" {
+		if backend.Type == "hermes" && isBlank(backend.Endpoint) {
 			addIssue(base+".endpoint", "missing_required", "endpoint is required for hermes backend")
 		}
 		if backend.APIKeyRef != "" && !secretRefPattern.MatchString(backend.APIKeyRef) {
@@ -56,31 +61,31 @@ func (r *Registry) Validate() error {
 	for id, model := range r.Models {
 		base := "models." + id
 		validateTopLevelID(addIssue, base, id)
-		if model.Backend == "" {
+		if isBlank(model.Backend) {
 			addIssue(base+".backend", "missing_required", "backend is required")
 		} else if _, ok := r.Backends[model.Backend]; !ok {
 			addIssue(base+".backend", "missing_reference", "backend reference not found")
 		}
-		if model.Name == "" {
+		if isBlank(model.Name) {
 			addIssue(base+".name", "missing_required", "name is required")
 		}
 	}
 	for id, person := range r.Persons {
 		base := "persons." + id
 		validateTopLevelID(addIssue, base, id)
-		if person.DisplayName == "" {
+		if isBlank(person.DisplayName) {
 			addIssue(base+".display_name", "missing_required", "display_name is required")
 		}
 	}
 	for id, profile := range r.Profiles {
 		base := "profiles." + id
 		validateTopLevelID(addIssue, base, id)
-		if profile.Person == "" {
+		if isBlank(profile.Person) {
 			addIssue(base+".person", "missing_required", "person is required")
 		} else if _, ok := r.Persons[profile.Person]; !ok {
 			addIssue(base+".person", "missing_reference", "person reference not found")
 		}
-		if profile.Model == "" {
+		if isBlank(profile.Model) {
 			addIssue(base+".model", "missing_required", "model is required")
 		} else if _, ok := r.Models[profile.Model]; !ok {
 			addIssue(base+".model", "missing_reference", "model reference not found")
@@ -91,17 +96,17 @@ func (r *Registry) Validate() error {
 		validateTopLevelID(addIssue, base, id)
 		defaultPersonOK := false
 		defaultProfileOK := false
-		if device.Label == "" {
+		if isBlank(device.Label) {
 			addIssue(base+".label", "missing_required", "label is required")
 		}
-		if device.DefaultPerson == "" {
+		if isBlank(device.DefaultPerson) {
 			addIssue(base+".default_person", "missing_required", "default_person is required")
 		} else if _, ok := r.Persons[device.DefaultPerson]; !ok {
 			addIssue(base+".default_person", "missing_reference", "default_person reference not found")
 		} else {
 			defaultPersonOK = true
 		}
-		if device.DefaultProfile == "" {
+		if isBlank(device.DefaultProfile) {
 			addIssue(base+".default_profile", "missing_required", "default_profile is required")
 		} else if _, ok := r.Profiles[device.DefaultProfile]; !ok {
 			addIssue(base+".default_profile", "missing_reference", "default_profile reference not found")
@@ -116,13 +121,13 @@ func (r *Registry) Validate() error {
 			if strings.TrimSpace(alias) == "" {
 				addIssue(aliasPath, "invalid_id", "alias key must not be empty")
 			}
-			if binding.Person == "" && binding.Profile == "" {
+			if isBlank(binding.Person) && isBlank(binding.Profile) {
 				addIssue(aliasPath, "missing_required", "alias binding requires person or profile")
 			}
 
 			personID := device.DefaultPerson
 			personOK := defaultPersonOK
-			if binding.Person != "" {
+			if !isBlank(binding.Person) {
 				personID = binding.Person
 				if _, ok := r.Persons[binding.Person]; !ok {
 					addIssue(aliasPath+".person", "missing_reference", "person reference not found")
@@ -138,7 +143,7 @@ func (r *Registry) Validate() error {
 			if profileOK {
 				profile = r.Profiles[profileID]
 			}
-			if binding.Profile != "" {
+			if !isBlank(binding.Profile) {
 				profileID = binding.Profile
 				var ok bool
 				profile, ok = r.Profiles[binding.Profile]
@@ -166,6 +171,10 @@ func validateTopLevelID(addIssue issueAdder, path, id string) {
 	}
 }
 
+func isBlank(s string) bool {
+	return strings.TrimSpace(s) == ""
+}
+
 func validateRoutePersonProfile(addIssue issueAdder, path, personID, profileID string, profile Profile) {
 	if profile.Person != personID {
 		addIssue(path, "incompatible_person_profile", fmt.Sprintf("profile %q belongs to person %q, not %q", profileID, profile.Person, personID))
@@ -176,5 +185,14 @@ func validationResult(issues []ValidationIssue) error {
 	if len(issues) == 0 {
 		return nil
 	}
+	sort.Slice(issues, func(i, j int) bool {
+		if issues[i].Path != issues[j].Path {
+			return issues[i].Path < issues[j].Path
+		}
+		if issues[i].Code != issues[j].Code {
+			return issues[i].Code < issues[j].Code
+		}
+		return issues[i].Message < issues[j].Message
+	})
 	return &ValidationError{Issues: issues}
 }

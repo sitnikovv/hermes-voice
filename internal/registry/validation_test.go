@@ -207,6 +207,81 @@ func TestValidateAggregatesIndependentIssues(t *testing.T) {
 	}
 }
 
+func TestValidateIssuesAreDeterministic(t *testing.T) {
+	reg := loadFixture(t)
+	reg.Backends["z_bad"] = registry.Backend{}
+	reg.Backends["a_bad"] = registry.Backend{}
+
+	issues := validationIssues(t, reg.Validate())
+	var got []string
+	for _, issue := range issues {
+		got = append(got, issue.Path+"/"+issue.Code)
+	}
+	for i := 1; i < len(got); i++ {
+		if got[i-1] > got[i] {
+			t.Fatalf("issues are not sorted: %v", got)
+		}
+	}
+}
+
+func TestValidateRejectsUnsupportedSchemaVersion(t *testing.T) {
+	reg := loadFixture(t)
+	reg.SchemaVersion = 2
+	assertValidationIssue(t, reg.Validate(), "schema_version", "unsupported_schema_version")
+}
+
+func TestValidateRejectsWhitespaceRequiredFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*registry.Registry)
+		path   string
+	}{
+		{name: "backend endpoint", mutate: func(reg *registry.Registry) {
+			b := reg.Backends["local_hermes"]
+			b.Endpoint = " \t"
+			reg.Backends["local_hermes"] = b
+		}, path: "backends.local_hermes.endpoint"},
+		{name: "model name", mutate: func(reg *registry.Registry) {
+			m := reg.Models["default_chat"]
+			m.Name = " \t"
+			reg.Models["default_chat"] = m
+		}, path: "models.default_chat.name"},
+		{name: "person display name", mutate: func(reg *registry.Registry) { p := reg.Persons["sve"]; p.DisplayName = " \t"; reg.Persons["sve"] = p }, path: "persons.sve.display_name"},
+		{name: "profile person", mutate: func(reg *registry.Registry) {
+			p := reg.Profiles["default"]
+			p.Person = " \t"
+			reg.Profiles["default"] = p
+		}, path: "profiles.default.person"},
+		{name: "profile model", mutate: func(reg *registry.Registry) {
+			p := reg.Profiles["default"]
+			p.Model = " \t"
+			reg.Profiles["default"] = p
+		}, path: "profiles.default.model"},
+		{name: "device label", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.Label = " \t"
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.label"},
+		{name: "device default person", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.DefaultPerson = " \t"
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.default_person"},
+		{name: "device default profile", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.DefaultProfile = " \t"
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.default_profile"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := loadFixture(t)
+			tt.mutate(reg)
+			assertValidationIssue(t, reg.Validate(), tt.path, "missing_required")
+		})
+	}
+}
+
 func TestValidateReferencesAndRouteConsistency(t *testing.T) {
 	tests := []struct {
 		name   string
