@@ -48,9 +48,63 @@ func (h handler) devText(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if h.cfg.Registry == nil {
+		writeError(w, http.StatusBadRequest, "route_error", "registry is not configured", req.RequestID)
+		return
+	}
+	if h.cfg.Cleaner == nil || h.cfg.Backend == nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "devclient is not configured", req.RequestID)
+		return
+	}
 
-	_ = effectiveInput
-	writeError(w, http.StatusBadRequest, "route_error", "registry is not configured", req.RequestID)
+	resolved, err := h.cfg.Registry.Resolve(req.DeviceID, req.Alias)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "route_error", err.Error(), req.RequestID)
+		return
+	}
+
+	cleaned := h.cfg.Cleaner.CleanWithTrace(effectiveInput)
+	backendReq := backend.Request{
+		ID:           req.RequestID,
+		Input:        cleaned.Cleaned,
+		DeviceID:     req.DeviceID,
+		Alias:        req.Alias,
+		PersonID:     resolved.PersonID,
+		ProfileID:    resolved.ProfileID,
+		ModelID:      resolved.ModelID,
+		BackendID:    resolved.BackendID,
+		ModelName:    resolved.Model.Name,
+		SystemPrompt: resolved.Profile.SystemPrompt,
+		Metadata:     requestMetadata(req.Metadata),
+	}
+	backendResp, err := h.cfg.Backend.Invoke(r.Context(), backendReq)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), req.RequestID)
+		return
+	}
+	if backendResp == nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "backend returned nil response", req.RequestID)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, devTextResponse{
+		RequestID: req.RequestID,
+		Status:    string(backendResp.Status),
+		Output:    backendResp.Output,
+		TaskID:    backendResp.TaskID,
+		Route: routeResponse{
+			DeviceID:  resolved.DeviceID,
+			Alias:     resolved.Alias,
+			PersonID:  resolved.PersonID,
+			ProfileID: resolved.ProfileID,
+			ModelID:   resolved.ModelID,
+			BackendID: resolved.BackendID,
+			ModelName: resolved.Model.Name,
+		},
+		Cleanup:  cleanupResponseFromResult(cleaned),
+		Usage:    backendResp.Usage,
+		Metadata: responseMetadata(backendResp.Metadata),
+	})
 }
 
 type devTextRequest struct {
@@ -60,6 +114,39 @@ type devTextRequest struct {
 	Input     string            `json:"input"`
 	Text      string            `json:"text"`
 	Metadata  map[string]string `json:"metadata"`
+}
+
+type devTextResponse struct {
+	RequestID string            `json:"request_id,omitempty"`
+	Status    string            `json:"status"`
+	Output    string            `json:"output"`
+	TaskID    string            `json:"task_id"`
+	Route     routeResponse     `json:"route"`
+	Cleanup   cleanupResponse   `json:"cleanup"`
+	Usage     *backend.Usage    `json:"usage"`
+	Metadata  map[string]string `json:"metadata"`
+}
+
+type routeResponse struct {
+	DeviceID  string `json:"device_id"`
+	Alias     string `json:"alias"`
+	PersonID  string `json:"person_id"`
+	ProfileID string `json:"profile_id"`
+	ModelID   string `json:"model_id"`
+	BackendID string `json:"backend_id"`
+	ModelName string `json:"model_name"`
+}
+
+type cleanupResponse struct {
+	Original string                  `json:"original"`
+	Cleaned  string                  `json:"cleaned"`
+	Applied  []cleanupAppliedRuleOut `json:"applied"`
+}
+
+type cleanupAppliedRuleOut struct {
+	ID     string `json:"id"`
+	Before string `json:"before"`
+	After  string `json:"after"`
 }
 
 func parseDevTextRequest(w http.ResponseWriter, r *http.Request) (devTextRequest, string, bool) {
@@ -96,6 +183,36 @@ func parseDevTextRequest(w http.ResponseWriter, r *http.Request) (devTextRequest
 		return devTextRequest{}, "", false
 	}
 	return req, effectiveInput, true
+}
+
+func requestMetadata(metadata map[string]string) map[string]string {
+	copied := make(map[string]string, len(metadata)+1)
+	for key, value := range metadata {
+		copied[key] = value
+	}
+	if _, ok := copied["source"]; !ok {
+		copied["source"] = "dev-http"
+	}
+	return copied
+}
+
+func responseMetadata(metadata map[string]string) map[string]string {
+	if metadata == nil {
+		return map[string]string{}
+	}
+	copied := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		copied[key] = value
+	}
+	return copied
+}
+
+func cleanupResponseFromResult(result cleanup.Result) cleanupResponse {
+	applied := make([]cleanupAppliedRuleOut, 0, len(result.Applied))
+	for _, rule := range result.Applied {
+		applied = append(applied, cleanupAppliedRuleOut{ID: rule.ID, Before: rule.Before, After: rule.After})
+	}
+	return cleanupResponse{Original: result.Original, Cleaned: result.Cleaned, Applied: applied}
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
