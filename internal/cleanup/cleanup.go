@@ -1,6 +1,10 @@
 package cleanup
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
 
 // Clean returns the final safe cleaned utterance text.
 func (c *Cleaner) Clean(input string) string {
@@ -38,9 +42,15 @@ func applyRule(rule Rule, input string) string {
 	case KindCollapseSpace:
 		return collapseWhitespace(input)
 	case KindRemovePrefixPhrase:
-		return strings.TrimPrefix(input, rule.Pattern)
+		if hasPrefixPhrase(input, rule.Pattern) {
+			return strings.TrimPrefix(input, rule.Pattern)
+		}
+		return input
 	case KindRemoveSuffixPhrase:
-		return strings.TrimSuffix(input, rule.Pattern)
+		if hasSuffixPhrase(input, rule.Pattern) {
+			return strings.TrimSuffix(input, rule.Pattern)
+		}
+		return input
 	case KindReplacePhrase:
 		return strings.ReplaceAll(input, rule.Pattern, rule.Replacement)
 	default:
@@ -50,4 +60,26 @@ func applyRule(rule Rule, input string) string {
 
 func collapseWhitespace(input string) string {
 	return strings.Join(strings.Fields(input), " ")
+}
+
+func hasPrefixPhrase(input, phrase string) bool {
+	if !strings.HasPrefix(input, phrase) {
+		return false
+	}
+	if len(input) == len(phrase) {
+		return true
+	}
+	r, _ := utf8.DecodeRuneInString(input[len(phrase):])
+	return unicode.IsSpace(r)
+}
+
+func hasSuffixPhrase(input, phrase string) bool {
+	if !strings.HasSuffix(input, phrase) {
+		return false
+	}
+	if len(input) == len(phrase) {
+		return true
+	}
+	r, _ := utf8.DecodeLastRuneInString(input[:len(input)-len(phrase)])
+	return unicode.IsSpace(r)
 }

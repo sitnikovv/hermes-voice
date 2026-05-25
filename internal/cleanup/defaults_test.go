@@ -70,6 +70,9 @@ func TestDefaultRulesPreserveIntentAndNames(t *testing.T) {
 		"позови гермес",
 		"передай Алисе пожалуйста привет завтра",
 		"для Саши включи музыку",
+		"нук включи свет",
+		"герместон включи свет",
+		"включи перепожалуйста",
 	} {
 		t.Run(input, func(t *testing.T) {
 			if got := cleaner.Clean(input); got != input {
