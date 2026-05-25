@@ -18,13 +18,15 @@ import (
 )
 
 type serverConfig struct {
-	RegistryPath     string
-	ListenAddr       string
-	StaticOutput     string
-	QuickTimeout     time.Duration
-	StaticDelay      time.Duration
-	AcceptedTaskID   string
-	AllowNonLoopback bool
+	RegistryPath      string
+	RegistryBackupDir string
+	BackupRegistry    bool
+	ListenAddr        string
+	StaticOutput      string
+	QuickTimeout      time.Duration
+	StaticDelay       time.Duration
+	AcceptedTaskID    string
+	AllowNonLoopback  bool
 }
 
 func defaultServerConfig() serverConfig {
@@ -38,6 +40,8 @@ func defaultServerConfig() serverConfig {
 func parseFlags() serverConfig {
 	cfg := defaultServerConfig()
 	flag.StringVar(&cfg.RegistryPath, "registry", cfg.RegistryPath, "path to local registry YAML")
+	flag.StringVar(&cfg.RegistryBackupDir, "registry-backup-dir", cfg.RegistryBackupDir, "optional registry backup directory; default is <registry-dir>/.registry-backups")
+	flag.BoolVar(&cfg.BackupRegistry, "backup-registry", cfg.BackupRegistry, "create a registry backup and exit without starting the dev HTTP server")
 	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "dev HTTP listen address")
 	flag.StringVar(&cfg.StaticOutput, "static-output", cfg.StaticOutput, "static backend output for the dev HTTP client")
 	flag.DurationVar(&cfg.QuickTimeout, "quick-timeout", cfg.QuickTimeout, "enable dispatcher accepted fallback after this duration; 0 disables dispatcher")
@@ -50,9 +54,21 @@ func parseFlags() serverConfig {
 
 func main() {
 	cfg := parseFlags()
+	if cfg.BackupRegistry {
+		backupPath, err := backupRegistry(cfg)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("registry backup created: %s\n", backupPath)
+		return
+	}
 	if err := run(cfg); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func backupRegistry(cfg serverConfig) (string, error) {
+	return registry.BackupFile(cfg.RegistryPath, cfg.RegistryBackupDir, time.Now())
 }
 
 func (cfg serverConfig) validate() error {

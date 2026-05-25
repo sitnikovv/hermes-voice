@@ -154,6 +154,16 @@ curl -sS http://127.0.0.1:8081/v1/dev/tasks/dev-task-1
 
 The task endpoint returns process-local state only. Tasks are lost on process restart, there is no list endpoint, no cancellation endpoint, no retry policy, and no durable result storage yet.
 
+Backup registry before manual/future automated changes:
+
+```bash
+go run ./cmd/hermes-voice \
+  --registry testdata/registry.yaml \
+  --backup-registry
+```
+
+By default backups are written to `<registry-dir>/.registry-backups`. Override with `--registry-backup-dir <path>`. The backup is an exact byte-for-byte copy; this command does not validate, rewrite, restore, or mutate the registry.
+
 Run tests:
 
 ```bash

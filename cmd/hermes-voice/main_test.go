@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +114,46 @@ func TestDevHandlerStaticDelayLongerThanQuickTimeoutStoresAcceptedTask(t *testin
 	}
 	if taskPayload.TaskID != "task-demo" || taskPayload.Status != string(taskstore.StatusAccepted) {
 		t.Fatalf("task payload = %+v, want accepted task-demo", taskPayload)
+	}
+}
+
+func TestBackupRegistryCreatesBackupAndReportsPath(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "registry.yaml")
+	if err := os.WriteFile(source, []byte("registry-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := defaultServerConfig()
+	cfg.RegistryPath = source
+	cfg.BackupRegistry = true
+	cfg.RegistryBackupDir = filepath.Join(dir, "backups")
+
+	backupPath, err := backupRegistry(cfg)
+	if err != nil {
+		t.Fatalf("backupRegistry() error = %v", err)
+	}
+	got, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "registry-bytes" {
+		t.Fatalf("backup content = %q", got)
+	}
+}
+
+func TestBackupRegistryModeDoesNotRequireListenValidation(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "registry.yaml")
+	if err := os.WriteFile(source, []byte("registry-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := defaultServerConfig()
+	cfg.RegistryPath = source
+	cfg.BackupRegistry = true
+	cfg.ListenAddr = "not-a-host-port"
+
+	if _, err := backupRegistry(cfg); err != nil {
+		t.Fatalf("backupRegistry() error = %v, want listen-independent backup", err)
 	}
 }
 
