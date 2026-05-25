@@ -79,7 +79,8 @@ func (h handler) devText(w http.ResponseWriter, r *http.Request) {
 	}
 	backendResp, err := h.cfg.Backend.Invoke(r.Context(), backendReq)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal_error", err.Error(), req.RequestID)
+		status, code := backendErrorStatus(err)
+		writeError(w, status, code, err.Error(), req.RequestID)
 		return
 	}
 	if backendResp == nil {
@@ -205,6 +206,21 @@ func responseMetadata(metadata map[string]string) map[string]string {
 		copied[key] = value
 	}
 	return copied
+}
+
+func backendErrorStatus(err error) (int, string) {
+	switch {
+	case errors.Is(err, backend.ErrInvalidRequest):
+		return http.StatusBadRequest, "backend_invalid_request"
+	case errors.Is(err, backend.ErrUnauthorized):
+		return http.StatusUnauthorized, "backend_unauthorized"
+	case errors.Is(err, backend.ErrTemporary):
+		return http.StatusServiceUnavailable, "backend_temporary"
+	case errors.Is(err, backend.ErrInvocationFailed):
+		return http.StatusBadGateway, "backend_invocation_failed"
+	default:
+		return http.StatusInternalServerError, "internal_error"
+	}
 }
 
 func cleanupResponseFromResult(result cleanup.Result) cleanupResponse {
