@@ -6,19 +6,22 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"hermes-voice/internal/backend"
 	"hermes-voice/internal/cleanup"
 	"hermes-voice/internal/registry"
+	"hermes-voice/internal/taskstore"
 )
 
 const maxRequestBodyBytes = 1 << 20
 
 // HandlerConfig contains the temporary dev HTTP handler dependencies.
 type HandlerConfig struct {
-	Registry *registry.Registry
-	Cleaner  *cleanup.Cleaner
-	Backend  backend.Adapter
+	Registry  *registry.Registry
+	Cleaner   *cleanup.Cleaner
+	Backend   backend.Adapter
+	TaskStore taskstore.Store
 }
 
 // NewHandler returns a dev-only HTTP handler for local text requests.
@@ -27,6 +30,8 @@ func NewHandler(cfg HandlerConfig) http.Handler {
 	h := handler{cfg: cfg}
 	mux.HandleFunc("/healthz", h.healthz)
 	mux.HandleFunc("/v1/dev/text", h.devText)
+	mux.HandleFunc("/v1/dev/tasks", h.devTask)
+	mux.HandleFunc("/v1/dev/tasks/", h.devTask)
 	return mux
 }
 
@@ -41,6 +46,45 @@ func (h handler) healthz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h handler) devTask(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed", "")
+		return
+	}
+	taskID, ok := taskIDFromPath(r.URL.Path)
+	if !ok {
+		writeError(w, http.StatusNotFound, "task_not_found", "task not found", "")
+		return
+	}
+	if h.cfg.TaskStore == nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "task store is not configured", "")
+		return
+	}
+	rec, found, err := h.cfg.TaskStore.Get(r.Context(), taskID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "task store error", "")
+		return
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "task_not_found", "task not found", "")
+		return
+	}
+	writeJSON(w, http.StatusOK, taskResponseFromRecord(rec))
+}
+
+func taskIDFromPath(path string) (string, bool) {
+	const prefix = "/v1/dev/tasks/"
+	if !strings.HasPrefix(path, prefix) {
+		return "", false
+	}
+	taskID := strings.TrimPrefix(path, prefix)
+	if taskID == "" || strings.Contains(taskID, "/") {
+		return "", false
+	}
+	return taskID, true
 }
 
 func (h handler) devText(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +181,25 @@ type devTextResponse struct {
 	Cleanup   cleanupResponse   `json:"cleanup"`
 	Usage     *usageResponse    `json:"usage"`
 	Metadata  map[string]string `json:"metadata"`
+}
+
+type taskResponse struct {
+	TaskID      string               `json:"task_id"`
+	RequestID   string               `json:"request_id"`
+	Status      string               `json:"status"`
+	CreatedAt   string               `json:"created_at"`
+	UpdatedAt   string               `json:"updated_at"`
+	CompletedAt string               `json:"completed_at,omitempty"`
+	Response    *taskBackendResponse `json:"response"`
+	Error       *devclientError      `json:"error"`
+	Metadata    map[string]string    `json:"metadata"`
+}
+
+type taskBackendResponse struct {
+	Status   string            `json:"status"`
+	Output   string            `json:"output"`
+	Usage    *usageResponse    `json:"usage"`
+	Metadata map[string]string `json:"metadata"`
 }
 
 type routeResponse struct {
@@ -249,6 +312,32 @@ func usageResponseFromBackend(usage *backend.Usage) *usageResponse {
 		return nil
 	}
 	return &usageResponse{InputTokens: usage.InputTokens, OutputTokens: usage.OutputTokens}
+}
+
+func taskResponseFromRecord(rec taskstore.Record) taskResponse {
+	out := taskResponse{
+		TaskID:    rec.TaskID,
+		RequestID: rec.RequestID,
+		Status:    string(rec.Status),
+		CreatedAt: rec.CreatedAt.Format(time.RFC3339Nano),
+		UpdatedAt: rec.UpdatedAt.Format(time.RFC3339Nano),
+		Metadata:  responseMetadata(rec.Metadata),
+	}
+	if rec.CompletedAt != nil {
+		out.CompletedAt = rec.CompletedAt.Format(time.RFC3339Nano)
+	}
+	if rec.Response != nil {
+		out.Response = &taskBackendResponse{
+			Status:   string(rec.Response.Status),
+			Output:   rec.Response.Output,
+			Usage:    usageResponseFromBackend(rec.Response.Usage),
+			Metadata: responseMetadata(rec.Response.Metadata),
+		}
+	}
+	if rec.Error != nil {
+		out.Error = &devclientError{Code: rec.Error.Code, Message: rec.Error.Message}
+	}
+	return out
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

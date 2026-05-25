@@ -12,6 +12,7 @@ import (
 	"hermes-voice/internal/cleanup"
 	"hermes-voice/internal/devclient"
 	"hermes-voice/internal/registry"
+	"hermes-voice/internal/taskstore"
 )
 
 func TestServerConfigRejectsNonLoopbackListenByDefault(t *testing.T) {
@@ -35,7 +36,7 @@ func TestServerConfigAllowsNonLoopbackWhenExplicitlyEnabled(t *testing.T) {
 
 func TestBuildBackendDefaultKeepsCompletedStaticResponse(t *testing.T) {
 	cfg := defaultServerConfig()
-	adapter, err := buildBackend(cfg)
+	adapter, err := buildBackend(cfg, nil)
 	if err != nil {
 		t.Fatalf("buildBackend() error = %v", err)
 	}
@@ -51,7 +52,7 @@ func TestBuildBackendDefaultKeepsCompletedStaticResponse(t *testing.T) {
 func TestBuildBackendCanEnableQuickTimeoutDispatcher(t *testing.T) {
 	cfg := defaultServerConfig()
 	cfg.QuickTimeout = time.Millisecond
-	adapter, err := buildBackend(cfg)
+	adapter, err := buildBackend(cfg, taskstore.NewMemoryStore())
 	if err != nil {
 		t.Fatalf("buildBackend() error = %v", err)
 	}
@@ -60,12 +61,13 @@ func TestBuildBackendCanEnableQuickTimeoutDispatcher(t *testing.T) {
 	}
 }
 
-func TestDevHandlerStaticDelayLongerThanQuickTimeoutReturnsAccepted(t *testing.T) {
+func TestDevHandlerStaticDelayLongerThanQuickTimeoutStoresAcceptedTask(t *testing.T) {
 	cfg := defaultServerConfig()
 	cfg.QuickTimeout = time.Millisecond
 	cfg.StaticDelay = 50 * time.Millisecond
 	cfg.AcceptedTaskID = "task-demo"
-	adapter, err := buildBackend(cfg)
+	store := taskstore.NewMemoryStore()
+	adapter, err := buildBackend(cfg, store)
 	if err != nil {
 		t.Fatalf("buildBackend() error = %v", err)
 	}
@@ -77,7 +79,7 @@ func TestDevHandlerStaticDelayLongerThanQuickTimeoutReturnsAccepted(t *testing.T
 	if err != nil {
 		t.Fatalf("cleanup.New() error = %v", err)
 	}
-	handler := devclient.NewHandler(devclient.HandlerConfig{Registry: reg, Cleaner: cleaner, Backend: adapter})
+	handler := devclient.NewHandler(devclient.HandlerConfig{Registry: reg, Cleaner: cleaner, Backend: adapter, TaskStore: store})
 	req := httptest.NewRequest(http.MethodPost, "/v1/dev/text", strings.NewReader(`{"request_id":"dev-accepted","device_id":"phone_ha","alias":"coding","input":"hello"}`))
 	req.Header.Set("content-type", "application/json")
 	w := httptest.NewRecorder()
@@ -94,6 +96,22 @@ func TestDevHandlerStaticDelayLongerThanQuickTimeoutReturnsAccepted(t *testing.T
 	}
 	if payload.Status != string(backend.StatusAccepted) || payload.TaskID != "task-demo" {
 		t.Fatalf("payload = %+v, want accepted task-demo", payload)
+	}
+	taskRec := httptest.NewRecorder()
+	taskReq := httptest.NewRequest(http.MethodGet, "/v1/dev/tasks/task-demo", nil)
+	handler.ServeHTTP(taskRec, taskReq)
+	if taskRec.Code != http.StatusOK {
+		t.Fatalf("task status = %d body = %s", taskRec.Code, taskRec.Body.String())
+	}
+	var taskPayload struct {
+		TaskID string `json:"task_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(taskRec.Body.Bytes(), &taskPayload); err != nil {
+		t.Fatalf("task json.Unmarshal() error = %v", err)
+	}
+	if taskPayload.TaskID != "task-demo" || taskPayload.Status != string(taskstore.StatusAccepted) {
+		t.Fatalf("task payload = %+v, want accepted task-demo", taskPayload)
 	}
 }
 

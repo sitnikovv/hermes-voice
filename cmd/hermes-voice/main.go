@@ -14,6 +14,7 @@ import (
 	"hermes-voice/internal/devclient"
 	"hermes-voice/internal/dispatch"
 	"hermes-voice/internal/registry"
+	"hermes-voice/internal/taskstore"
 )
 
 type serverConfig struct {
@@ -92,20 +93,22 @@ func run(cfg serverConfig) error {
 	if err != nil {
 		return err
 	}
-	adapter, err := buildBackend(cfg)
+	store := taskstore.NewMemoryStore()
+	adapter, err := buildBackend(cfg, store)
 	if err != nil {
 		return err
 	}
 	handler := devclient.NewHandler(devclient.HandlerConfig{
-		Registry: reg,
-		Cleaner:  cleaner,
-		Backend:  adapter,
+		Registry:  reg,
+		Cleaner:   cleaner,
+		Backend:   adapter,
+		TaskStore: store,
 	})
 	log.Printf("starting dev-only HTTP text client on %s", cfg.ListenAddr)
 	return http.ListenAndServe(cfg.ListenAddr, handler)
 }
 
-func buildBackend(cfg serverConfig) (backend.Adapter, error) {
+func buildBackend(cfg serverConfig, store taskstore.Store) (backend.Adapter, error) {
 	var adapter backend.Adapter = backend.NewStaticAdapter(backend.Response{
 		Status: backend.StatusCompleted,
 		Output: cfg.StaticOutput,
@@ -122,7 +125,7 @@ func buildBackend(cfg serverConfig) (backend.Adapter, error) {
 	}
 	return dispatch.New(dispatch.Config{
 		Backend:      adapter,
-		Runner:       discardRunner{},
+		Store:        store,
 		QuickTimeout: cfg.QuickTimeout,
 		TaskID:       taskID,
 	})
@@ -146,7 +149,3 @@ func (a delayedAdapter) Invoke(ctx context.Context, req backend.Request) (*backe
 		return nil, ctx.Err()
 	}
 }
-
-type discardRunner struct{}
-
-func (discardRunner) Start(context.Context, dispatch.Task) {}
