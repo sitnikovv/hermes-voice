@@ -129,7 +129,96 @@ devices:
 `
 }
 
+func TestValidateIDsAndRequiredFields(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*registry.Registry)
+		path   string
+		code   string
+	}{
+		{name: "invalid backend id", mutate: func(reg *registry.Registry) { reg.Backends["Bad"] = reg.Backends["local_hermes"] }, path: "backends.Bad", code: "invalid_id"},
+		{name: "invalid model id", mutate: func(reg *registry.Registry) { reg.Models["bad.id"] = reg.Models["default_chat"] }, path: "models.bad.id", code: "invalid_id"},
+		{name: "invalid person id", mutate: func(reg *registry.Registry) { reg.Persons["-bad"] = reg.Persons["sve"] }, path: "persons.-bad", code: "invalid_id"},
+		{name: "invalid profile id", mutate: func(reg *registry.Registry) { reg.Profiles["bad id"] = reg.Profiles["default"] }, path: "profiles.bad id", code: "invalid_id"},
+		{name: "invalid device id", mutate: func(reg *registry.Registry) { reg.Devices["bad.id"] = reg.Devices["phone_ha"] }, path: "devices.bad.id", code: "invalid_id"},
+		{name: "empty alias key", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.Aliases[" \t"] = registry.AliasBinding{Person: "sve"}
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.aliases. \t", code: "invalid_id"},
+		{name: "backend missing type", mutate: func(reg *registry.Registry) {
+			b := reg.Backends["local_hermes"]
+			b.Type = ""
+			reg.Backends["local_hermes"] = b
+		}, path: "backends.local_hermes.type", code: "missing_required"},
+		{name: "hermes missing endpoint", mutate: func(reg *registry.Registry) {
+			b := reg.Backends["local_hermes"]
+			b.Endpoint = ""
+			reg.Backends["local_hermes"] = b
+		}, path: "backends.local_hermes.endpoint", code: "missing_required"},
+		{name: "model missing backend", mutate: func(reg *registry.Registry) {
+			m := reg.Models["default_chat"]
+			m.Backend = ""
+			reg.Models["default_chat"] = m
+		}, path: "models.default_chat.backend", code: "missing_required"},
+		{name: "model missing name", mutate: func(reg *registry.Registry) {
+			m := reg.Models["default_chat"]
+			m.Name = ""
+			reg.Models["default_chat"] = m
+		}, path: "models.default_chat.name", code: "missing_required"},
+		{name: "person missing display name", mutate: func(reg *registry.Registry) { p := reg.Persons["sve"]; p.DisplayName = ""; reg.Persons["sve"] = p }, path: "persons.sve.display_name", code: "missing_required"},
+		{name: "profile missing person", mutate: func(reg *registry.Registry) { p := reg.Profiles["default"]; p.Person = ""; reg.Profiles["default"] = p }, path: "profiles.default.person", code: "missing_required"},
+		{name: "profile missing model", mutate: func(reg *registry.Registry) { p := reg.Profiles["default"]; p.Model = ""; reg.Profiles["default"] = p }, path: "profiles.default.model", code: "missing_required"},
+		{name: "device missing label", mutate: func(reg *registry.Registry) { d := reg.Devices["phone_ha"]; d.Label = ""; reg.Devices["phone_ha"] = d }, path: "devices.phone_ha.label", code: "missing_required"},
+		{name: "device missing default person", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.DefaultPerson = ""
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.default_person", code: "missing_required"},
+		{name: "device missing default profile", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.DefaultProfile = ""
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.default_profile", code: "missing_required"},
+		{name: "empty alias binding", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.Aliases["empty"] = registry.AliasBinding{}
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.aliases.empty", code: "missing_required"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := loadFixture(t)
+			tt.mutate(reg)
+			assertValidationIssue(t, reg.Validate(), tt.path, tt.code)
+		})
+	}
+}
+
+func TestValidateAggregatesIndependentIssues(t *testing.T) {
+	reg := loadFixture(t)
+	reg.Backends["Bad"] = registry.Backend{}
+	reg.Models["default_chat"] = registry.Model{}
+	err := reg.Validate()
+	assertValidationIssue(t, err, "backends.Bad", "invalid_id")
+	assertValidationIssue(t, err, "models.default_chat.backend", "missing_required")
+	if len(validationIssues(t, err)) < 2 {
+		t.Fatalf("got fewer than 2 issues: %v", err)
+	}
+}
+
 func assertValidationIssue(t *testing.T, err error, path, code string) {
+	t.Helper()
+	issues := validationIssues(t, err)
+	for _, issue := range issues {
+		if issue.Path == path && issue.Code == code {
+			return
+		}
+	}
+	t.Fatalf("issues = %#v, want path=%q code=%q", issues, path, code)
+}
+
+func validationIssues(t *testing.T, err error) []registry.ValidationIssue {
 	t.Helper()
 	if !errors.Is(err, registry.ErrInvalidRegistry) {
 		t.Fatalf("error = %v, want ErrInvalidRegistry", err)
@@ -138,10 +227,5 @@ func assertValidationIssue(t *testing.T, err error, path, code string) {
 	if !errors.As(err, &validationErr) {
 		t.Fatalf("error = %T, want *ValidationError", err)
 	}
-	for _, issue := range validationErr.Issues {
-		if issue.Path == path && issue.Code == code {
-			return
-		}
-	}
-	t.Fatalf("issues = %#v, want path=%q code=%q", validationErr.Issues, path, code)
+	return validationErr.Issues
 }
