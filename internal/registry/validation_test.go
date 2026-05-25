@@ -272,6 +272,53 @@ func TestValidateReferencesAndRouteConsistency(t *testing.T) {
 	}
 }
 
+func TestValidateSecretRefsAndBackendTypes(t *testing.T) {
+	t.Run("valid empty api_key_ref", func(t *testing.T) {
+		reg := loadFixture(t)
+		b := reg.Backends["local_hermes"]
+		b.APIKeyRef = ""
+		reg.Backends["local_hermes"] = b
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+	t.Run("valid env api_key_ref", func(t *testing.T) {
+		reg := loadFixture(t)
+		b := reg.Backends["local_hermes"]
+		b.APIKeyRef = "env:HERMES_API_KEY"
+		reg.Backends["local_hermes"] = b
+		if err := reg.Validate(); err != nil {
+			t.Fatalf("Validate() error = %v", err)
+		}
+	})
+
+	tests := []struct {
+		name      string
+		apiKeyRef string
+	}{
+		{name: "invalid prefix", apiKeyRef: "file:/secret"},
+		{name: "invalid env name", apiKeyRef: "env:hermes_api_key"},
+		{name: "invalid empty env name", apiKeyRef: "env:"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := loadFixture(t)
+			b := reg.Backends["local_hermes"]
+			b.APIKeyRef = tt.apiKeyRef
+			reg.Backends["local_hermes"] = b
+			assertValidationIssue(t, reg.Validate(), "backends.local_hermes.api_key_ref", "invalid_secret_ref")
+		})
+	}
+
+	t.Run("unknown backend type", func(t *testing.T) {
+		reg := loadFixture(t)
+		b := reg.Backends["local_hermes"]
+		b.Type = "other"
+		reg.Backends["local_hermes"] = b
+		assertValidationIssue(t, reg.Validate(), "backends.local_hermes.type", "unknown_backend_type")
+	})
+}
+
 func assertValidationIssue(t *testing.T, err error, path, code string) {
 	t.Helper()
 	issues := validationIssues(t, err)

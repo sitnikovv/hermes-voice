@@ -6,7 +6,10 @@ import (
 	"strings"
 )
 
-var registryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+var (
+	registryIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+	secretRefPattern  = regexp.MustCompile(`^env:[A-Z_][A-Z0-9_]*$`)
+)
 
 func (r *Registry) Validate() error {
 	var issues []ValidationIssue
@@ -40,9 +43,14 @@ func (r *Registry) Validate() error {
 		validateTopLevelID(addIssue, base, id)
 		if backend.Type == "" {
 			addIssue(base+".type", "missing_required", "type is required")
+		} else if backend.Type != "hermes" {
+			addIssue(base+".type", "unknown_backend_type", "backend type must be hermes")
 		}
 		if backend.Type == "hermes" && backend.Endpoint == "" {
 			addIssue(base+".endpoint", "missing_required", "endpoint is required for hermes backend")
+		}
+		if backend.APIKeyRef != "" && !secretRefPattern.MatchString(backend.APIKeyRef) {
+			addIssue(base+".api_key_ref", "invalid_secret_ref", "api_key_ref must be empty or match env:[A-Z_][A-Z0-9_]*")
 		}
 	}
 	for id, model := range r.Models {
