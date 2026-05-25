@@ -9,7 +9,9 @@ import (
 
 func Load(r io.Reader) (*Registry, error) {
 	var raw registryYAML
-	if err := yaml.NewDecoder(r).Decode(&raw); err != nil {
+	decoder := yaml.NewDecoder(r)
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&raw); err != nil {
 		return nil, err
 	}
 	if raw.SchemaVersion != 1 {
@@ -33,6 +35,9 @@ func Load(r io.Reader) (*Registry, error) {
 			Endpoint:  backend.Endpoint,
 			APIKeyRef: backend.APIKeyRef,
 		}
+	}
+	if err := reg.Validate(); err != nil {
+		return nil, err
 	}
 	return reg, nil
 }
