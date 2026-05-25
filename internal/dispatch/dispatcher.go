@@ -47,12 +47,12 @@ func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	invokeCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
+	invokeCtx, cancelInvoke := context.WithCancel(context.Background())
 
 	result := make(chan invokeResult, 1)
 	go func() {
-		resp, err := d.backend.Invoke(invokeCtx, req)
+		defer cancelInvoke()
+		resp, err := d.backend.Invoke(invokeCtx, cloneRequest(req))
 		result <- invokeResult{resp: resp, err: err}
 	}()
 
@@ -63,14 +63,14 @@ func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.
 	case res := <-result:
 		return res.resp, res.err
 	case <-ctx.Done():
+		cancelInvoke()
 		return nil, ctx.Err()
 	case <-timer.C:
-		cancel()
 		taskID := strings.TrimSpace(d.taskID(req))
 		if taskID == "" {
 			taskID = defaultTaskID(req)
 		}
-		d.runner.Start(context.Background(), Task{ID: taskID, Request: req})
+		go d.runner.Start(context.Background(), Task{ID: taskID, Request: cloneRequest(req)})
 		return &backend.Response{
 			ID:     req.ID,
 			Status: backend.StatusAccepted,
@@ -86,6 +86,17 @@ func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.
 type invokeResult struct {
 	resp *backend.Response
 	err  error
+}
+
+func cloneRequest(req backend.Request) backend.Request {
+	cloned := req
+	if req.Metadata != nil {
+		cloned.Metadata = make(map[string]string, len(req.Metadata))
+		for key, value := range req.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
 }
 
 func defaultTaskID(req backend.Request) string {

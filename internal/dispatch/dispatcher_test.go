@@ -67,6 +67,25 @@ func (a blockingAdapter) Invoke(ctx context.Context, req backend.Request) (*back
 	}
 }
 
+type observingAdapter struct {
+	started chan context.Context
+	release chan struct{}
+	done    chan error
+}
+
+func (a observingAdapter) Invoke(ctx context.Context, req backend.Request) (*backend.Response, error) {
+	a.started <- ctx
+	select {
+	case <-a.release:
+		err := ctx.Err()
+		a.done <- err
+		return &backend.Response{Status: backend.StatusCompleted}, err
+	case <-ctx.Done():
+		a.done <- ctx.Err()
+		return nil, ctx.Err()
+	}
+}
+
 type spyRunner struct {
 	started chan Task
 	ctx     chan context.Context
@@ -79,6 +98,16 @@ func (r spyRunner) Start(ctx context.Context, task Task) {
 	if r.started != nil {
 		r.started <- task
 	}
+}
+
+type blockingRunner struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (r blockingRunner) Start(context.Context, Task) {
+	close(r.entered)
+	<-r.release
 }
 
 func validRequest() backend.Request {
@@ -164,6 +193,7 @@ func TestInvokeQuickTimeoutReturnsAcceptedAndStartsRunner(t *testing.T) {
 	req := validRequest()
 	req.ID = "req-timeout"
 	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(adapter.release)
 	runner := spyRunner{started: make(chan Task, 1), ctx: make(chan context.Context, 1)}
 	d, err := New(Config{
 		Backend:      adapter,
@@ -202,8 +232,76 @@ func TestInvokeQuickTimeoutReturnsAcceptedAndStartsRunner(t *testing.T) {
 	}
 }
 
+func TestInvokeQuickTimeoutDoesNotCancelOriginalBackendInvoke(t *testing.T) {
+	adapter := observingAdapter{
+		started: make(chan context.Context, 1),
+		release: make(chan struct{}),
+		done:    make(chan error, 1),
+	}
+	runner := spyRunner{started: make(chan Task, 1)}
+	d, err := New(Config{
+		Backend:      adapter,
+		Runner:       runner,
+		QuickTimeout: time.Millisecond,
+		TaskID:       func(backend.Request) string { return "task-continue" },
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	parent, cancelParent := context.WithCancel(context.Background())
+	resp, err := d.Invoke(parent, validRequest())
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if resp.Status != backend.StatusAccepted {
+		t.Fatalf("status = %q, want accepted", resp.Status)
+	}
+	backendCtx := <-adapter.started
+	cancelParent()
+	if err := backendCtx.Err(); err != nil {
+		t.Fatalf("backend context after accepted parent cancel = %v, want detached active context", err)
+	}
+	close(adapter.release)
+	if err := <-adapter.done; err != nil {
+		t.Fatalf("backend completion context error = %v, want nil", err)
+	}
+}
+
+func TestInvokeQuickTimeoutDoesNotWaitForBlockingRunner(t *testing.T) {
+	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(adapter.release)
+	runner := blockingRunner{entered: make(chan struct{}), release: make(chan struct{})}
+	d, err := New(Config{
+		Backend:      adapter,
+		Runner:       runner,
+		QuickTimeout: time.Millisecond,
+		TaskID:       func(backend.Request) string { return "task-blocking-runner" },
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer close(runner.release)
+	start := time.Now()
+	resp, err := d.Invoke(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if resp.Status != backend.StatusAccepted {
+		t.Fatalf("status = %q, want accepted", resp.Status)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("Invoke blocked on runner for %v", elapsed)
+	}
+	select {
+	case <-runner.entered:
+	case <-time.After(time.Second):
+		t.Fatal("runner did not start asynchronously")
+	}
+}
+
 func TestInvokeQuickTimeoutFallsBackWhenTaskIDFuncReturnsEmpty(t *testing.T) {
 	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(adapter.release)
 	runner := spyRunner{started: make(chan Task, 1)}
 	d, err := New(Config{
 		Backend:      adapter,
