@@ -17,7 +17,17 @@ func New(rules []Rule) (*Cleaner, error) {
 
 		switch rule.Kind {
 		case KindTrimSpace, KindCollapseSpace:
-		case KindRemovePrefixPhrase, KindRemoveSuffixPhrase, KindReplacePhrase:
+			if rule.Replacement != "" {
+				return nil, fmt.Errorf("cleanup rule %q: replacement is only allowed for %s", rule.ID, KindReplacePhrase)
+			}
+		case KindRemovePrefixPhrase, KindRemoveSuffixPhrase:
+			if rule.Pattern == "" {
+				return nil, fmt.Errorf("cleanup rule %q: pattern is required for %s", rule.ID, rule.Kind)
+			}
+			if rule.Replacement != "" {
+				return nil, fmt.Errorf("cleanup rule %q: replacement is only allowed for %s", rule.ID, KindReplacePhrase)
+			}
+		case KindReplacePhrase:
 			if rule.Pattern == "" {
 				return nil, fmt.Errorf("cleanup rule %q: pattern is required for %s", rule.ID, rule.Kind)
 			}

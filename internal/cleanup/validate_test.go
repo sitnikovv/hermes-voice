@@ -57,6 +57,25 @@ func TestNewValidatesRules(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name: "rejects replacement for trim",
+			rules: []Rule{{
+				ID:          "trim",
+				Kind:        KindTrimSpace,
+				Replacement: "ignored",
+			}},
+			wantErr: true,
+		},
+		{
+			name: "rejects replacement for prefix removal",
+			rules: []Rule{{
+				ID:          "prefix",
+				Kind:        KindRemovePrefixPhrase,
+				Pattern:     "гермес",
+				Replacement: "ignored",
+			}},
+			wantErr: true,
+		},
+		{
 			name: "accepts valid rules",
 			rules: []Rule{
 				{ID: "trim", Kind: KindTrimSpace},

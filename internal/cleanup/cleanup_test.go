@@ -54,6 +54,25 @@ func TestCleanReturnsTraceCleaned(t *testing.T) {
 	}
 }
 
+func TestCleanWithTraceFallbackRecordsAppliedRule(t *testing.T) {
+	cleaner := mustCleaner(t, []Rule{
+		{ID: "prefix", Kind: KindRemovePrefixPhrase, Pattern: "гермес"},
+		{ID: "trim", Kind: KindTrimSpace},
+	})
+
+	got := cleaner.CleanWithTrace("гермес")
+	if got.Cleaned != "гермес" {
+		t.Fatalf("Cleaned = %q, want fallback original", got.Cleaned)
+	}
+	if len(got.Applied) == 0 || got.Applied[len(got.Applied)-1].ID != "fallback_original" {
+		t.Fatalf("Applied = %#v, want final fallback_original rule", got.Applied)
+	}
+	last := got.Applied[len(got.Applied)-1]
+	if last.Before != "" || last.After != "гермес" {
+		t.Fatalf("fallback trace = %#v, want before empty after original", last)
+	}
+}
+
 func mustCleaner(t *testing.T, rules []Rule) *Cleaner {
 	t.Helper()
 	cleaner, err := New(rules)

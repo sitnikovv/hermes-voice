@@ -29,7 +29,13 @@ func (c *Cleaner) CleanWithTrace(input string) Result {
 	}
 
 	if current == "" && strings.TrimSpace(input) != "" {
-		current = collapseWhitespace(strings.TrimSpace(input))
+		fallback := collapseWhitespace(strings.TrimSpace(input))
+		result.Applied = append(result.Applied, AppliedRule{
+			ID:     "fallback_original",
+			Before: current,
+			After:  fallback,
+		})
+		current = fallback
 	}
 	result.Cleaned = current
 	return result
