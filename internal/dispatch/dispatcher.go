@@ -43,6 +43,9 @@ func New(cfg Config) (*Dispatcher, error) {
 }
 
 // Invoke runs the backend until it responds, the parent context is canceled, or the quick timeout expires.
+// The backend invoke context is dispatcher-owned: parent cancellation before the
+// timeout cancels it, but after an accepted fallback the original invoke may continue
+// detached from the caller while TaskRunner records the accepted handoff.
 func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.Response, error) {
 	if ctx == nil {
 		ctx = context.Background()

@@ -90,7 +90,8 @@ Behavior:
 - if the backend completes or fails before the timeout, the original response/error is returned unchanged;
 - if the caller context is canceled before the timeout, the context error is returned and no background task is started;
 - if the timeout fires first, the dispatcher returns `StatusAccepted` with a non-empty `task_id` and metadata `accepted_by=dispatcher`, `reason=quick_timeout`;
-- the minimal background `TaskRunner` receives the original backend request with a detached context.
+- the original backend invoke may continue on a dispatcher-owned context detached from later caller cancellation;
+- the minimal `TaskRunner` is an accepted-handoff observer/registrar, not a second implicit backend invocation.
 
 Goal 007 intentionally does not add task storage, a status endpoint, polling, result retrieval, retries, cancellation lifecycle, streaming, or real Hermes transport. Those remain a Goal 008+ boundary.
 

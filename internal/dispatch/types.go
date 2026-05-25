@@ -13,7 +13,9 @@ type Task struct {
 	Request backend.Request
 }
 
-// TaskRunner starts a detached background task. Goal 007 intentionally exposes no store/status/result API.
+// TaskRunner observes or registers accepted fallback work after the original backend
+// invocation has crossed the quick-response budget. It must not implicitly invoke the
+// same backend request again; result storage/retrieval is introduced by later goals.
 type TaskRunner interface {
 	Start(ctx context.Context, task Task)
 }
