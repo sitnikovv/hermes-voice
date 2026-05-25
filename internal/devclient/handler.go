@@ -2,12 +2,17 @@ package devclient
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
+	"strings"
 
 	"hermes-voice/internal/backend"
 	"hermes-voice/internal/cleanup"
 	"hermes-voice/internal/registry"
 )
+
+const maxRequestBodyBytes = 1 << 20
 
 // HandlerConfig contains the temporary dev HTTP handler dependencies.
 type HandlerConfig struct {
@@ -38,7 +43,59 @@ func (h handler) devText(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	writeError(w, http.StatusBadRequest, "invalid_request", "device_id is required", "")
+
+	req, effectiveInput, ok := parseDevTextRequest(w, r)
+	if !ok {
+		return
+	}
+
+	_ = effectiveInput
+	writeError(w, http.StatusBadRequest, "route_error", "registry is not configured", req.RequestID)
+}
+
+type devTextRequest struct {
+	RequestID string            `json:"request_id"`
+	DeviceID  string            `json:"device_id"`
+	Alias     string            `json:"alias"`
+	Input     string            `json:"input"`
+	Text      string            `json:"text"`
+	Metadata  map[string]string `json:"metadata"`
+}
+
+func parseDevTextRequest(w http.ResponseWriter, r *http.Request) (devTextRequest, string, bool) {
+	var req devTextRequest
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBodyBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		message := "malformed JSON"
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			message = "request body too large"
+		}
+		writeError(w, http.StatusBadRequest, "invalid_request", message, req.RequestID)
+		return devTextRequest{}, "", false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_request", "malformed JSON", req.RequestID)
+		return devTextRequest{}, "", false
+	}
+	if req.DeviceID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "device_id is required", req.RequestID)
+		return devTextRequest{}, "", false
+	}
+
+	effectiveInput := req.Input
+	if effectiveInput == "" {
+		effectiveInput = req.Text
+	} else if req.Text != "" && req.Text != req.Input {
+		writeError(w, http.StatusBadRequest, "invalid_request", "input and text conflict", req.RequestID)
+		return devTextRequest{}, "", false
+	}
+	if strings.TrimSpace(effectiveInput) == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "input is required", req.RequestID)
+		return devTextRequest{}, "", false
+	}
+	return req, effectiveInput, true
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {
