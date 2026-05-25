@@ -32,6 +32,21 @@ func (a staticAdapter) Invoke(ctx context.Context, req Request) (*Response, erro
 	if a.err != nil {
 		return nil, a.err
 	}
-	resp := a.resp
+	resp := cloneResponse(a.resp)
 	return &resp, nil
+}
+
+func cloneResponse(resp Response) Response {
+	cloned := resp
+	if resp.Usage != nil {
+		usage := *resp.Usage
+		cloned.Usage = &usage
+	}
+	if resp.Metadata != nil {
+		cloned.Metadata = make(map[string]string, len(resp.Metadata))
+		for key, value := range resp.Metadata {
+			cloned.Metadata[key] = value
+		}
+	}
+	return cloned
 }

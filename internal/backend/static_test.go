@@ -39,6 +39,38 @@ func TestStaticAdapterReturnsConfiguredCompletedResponse(t *testing.T) {
 	}
 }
 
+func TestStaticAdapterReturnsDefensiveResponseCopy(t *testing.T) {
+	adapter := NewStaticAdapter(Response{
+		ID:     "resp-1",
+		Status: StatusCompleted,
+		Usage:  &Usage{InputTokens: 1, OutputTokens: 2},
+		Metadata: map[string]string{
+			"backend": "static",
+		},
+	})
+
+	first, err := adapter.Invoke(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("first Invoke() error = %v", err)
+	}
+	first.Usage.InputTokens = 999
+	first.Metadata["backend"] = "mutated"
+
+	second, err := adapter.Invoke(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("second Invoke() error = %v", err)
+	}
+	if second.Usage == nil || second.Usage.InputTokens != 1 {
+		t.Fatalf("second usage = %#v, want original defensive copy", second.Usage)
+	}
+	if second.Metadata["backend"] != "static" {
+		t.Fatalf("second metadata = %#v, want original defensive copy", second.Metadata)
+	}
+	if first.Usage == second.Usage {
+		t.Fatal("usage pointer reused between responses")
+	}
+}
+
 func TestStaticAdapterReturnsConfiguredAcceptedResponseWithTaskID(t *testing.T) {
 	want := Response{ID: "resp-1", Status: StatusAccepted, TaskID: "task-1"}
 

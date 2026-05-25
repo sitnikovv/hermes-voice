@@ -35,11 +35,17 @@ func TestRequestValidateRejectsMissingRequiredFields(t *testing.T) {
 		mutate func(*Request)
 	}{
 		{name: "input", mutate: func(req *Request) { req.Input = "" }},
+		{name: "input whitespace", mutate: func(req *Request) { req.Input = " \t\n " }},
 		{name: "person ID", mutate: func(req *Request) { req.PersonID = "" }},
+		{name: "person ID whitespace", mutate: func(req *Request) { req.PersonID = "   " }},
 		{name: "profile ID", mutate: func(req *Request) { req.ProfileID = "" }},
+		{name: "profile ID whitespace", mutate: func(req *Request) { req.ProfileID = "   " }},
 		{name: "model ID", mutate: func(req *Request) { req.ModelID = "" }},
+		{name: "model ID whitespace", mutate: func(req *Request) { req.ModelID = "   " }},
 		{name: "backend ID", mutate: func(req *Request) { req.BackendID = "" }},
+		{name: "backend ID whitespace", mutate: func(req *Request) { req.BackendID = "   " }},
 		{name: "model name", mutate: func(req *Request) { req.ModelName = "" }},
+		{name: "model name whitespace", mutate: func(req *Request) { req.ModelName = "   " }},
 	}
 
 	for _, tt := range tests {
