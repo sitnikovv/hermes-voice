@@ -42,9 +42,50 @@ func New(cfg Config) (*Dispatcher, error) {
 	return &Dispatcher{backend: cfg.Backend, runner: cfg.Runner, quickTimeout: quickTimeout, taskID: taskID}, nil
 }
 
-// Invoke currently delegates to the wrapped backend; timeout fallback behavior is added in later tasks.
+// Invoke runs the backend until it responds, the parent context is canceled, or the quick timeout expires.
 func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.Response, error) {
-	return d.backend.Invoke(ctx, req)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	invokeCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	result := make(chan invokeResult, 1)
+	go func() {
+		resp, err := d.backend.Invoke(invokeCtx, req)
+		result <- invokeResult{resp: resp, err: err}
+	}()
+
+	timer := time.NewTimer(d.quickTimeout)
+	defer timer.Stop()
+
+	select {
+	case res := <-result:
+		return res.resp, res.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		cancel()
+		taskID := strings.TrimSpace(d.taskID(req))
+		if taskID == "" {
+			taskID = defaultTaskID(req)
+		}
+		d.runner.Start(context.Background(), Task{ID: taskID, Request: req})
+		return &backend.Response{
+			ID:     req.ID,
+			Status: backend.StatusAccepted,
+			TaskID: taskID,
+			Metadata: map[string]string{
+				"accepted_by": "dispatcher",
+				"reason":      "quick_timeout",
+			},
+		}, nil
+	}
+}
+
+type invokeResult struct {
+	resp *backend.Response
+	err  error
 }
 
 func defaultTaskID(req backend.Request) string {

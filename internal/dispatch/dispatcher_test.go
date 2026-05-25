@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -68,9 +69,13 @@ func (a blockingAdapter) Invoke(ctx context.Context, req backend.Request) (*back
 
 type spyRunner struct {
 	started chan Task
+	ctx     chan context.Context
 }
 
 func (r spyRunner) Start(ctx context.Context, task Task) {
+	if r.ctx != nil {
+		r.ctx <- ctx
+	}
 	if r.started != nil {
 		r.started <- task
 	}
@@ -152,5 +157,68 @@ func TestInvokeParentCanceledBeforeTimeoutReturnsContextErrorNoRunner(t *testing
 	case task := <-runner.started:
 		t.Fatalf("runner started on parent cancel: %+v", task)
 	default:
+	}
+}
+
+func TestInvokeQuickTimeoutReturnsAcceptedAndStartsRunner(t *testing.T) {
+	req := validRequest()
+	req.ID = "req-timeout"
+	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	runner := spyRunner{started: make(chan Task, 1), ctx: make(chan context.Context, 1)}
+	d, err := New(Config{
+		Backend:      adapter,
+		Runner:       runner,
+		QuickTimeout: time.Millisecond,
+		TaskID:       func(backend.Request) string { return "task-static" },
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	resp, err := d.Invoke(ctx, req)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if resp.ID != req.ID || resp.Status != backend.StatusAccepted || resp.TaskID != "task-static" {
+		t.Fatalf("accepted response = %+v, want req id, accepted, deterministic task id", resp)
+	}
+	wantMeta := map[string]string{"accepted_by": "dispatcher", "reason": "quick_timeout"}
+	if !reflect.DeepEqual(resp.Metadata, wantMeta) {
+		t.Fatalf("metadata = %#v, want %#v", resp.Metadata, wantMeta)
+	}
+	var task Task
+	select {
+	case task = <-runner.started:
+	case <-time.After(time.Second):
+		t.Fatal("runner was not started")
+	}
+	if task.ID != "task-static" || !reflect.DeepEqual(task.Request, req) {
+		t.Fatalf("task = %+v, want original request and deterministic id", task)
+	}
+	runnerCtx := <-runner.ctx
+	cancel()
+	if err := runnerCtx.Err(); err != nil {
+		t.Fatalf("runner context Err() = %v, want detached from parent cancel", err)
+	}
+}
+
+func TestInvokeQuickTimeoutFallsBackWhenTaskIDFuncReturnsEmpty(t *testing.T) {
+	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	runner := spyRunner{started: make(chan Task, 1)}
+	d, err := New(Config{
+		Backend:      adapter,
+		Runner:       runner,
+		QuickTimeout: time.Millisecond,
+		TaskID:       func(backend.Request) string { return "" },
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	resp, err := d.Invoke(context.Background(), validRequest())
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if resp.TaskID == "" {
+		t.Fatal("TaskID is empty, want non-empty fallback")
 	}
 }
