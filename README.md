@@ -21,7 +21,8 @@ The first implemented core pieces are:
   - deterministic resolution from `device_id + optional alias` to person/profile/model/backend;
   - typed lookup and validation errors;
   - inline secrets are rejected; use references such as `env:HERMES_API_KEY`;
-- an isolated rules-based speech cleanup package for utterance text.
+- an isolated rules-based speech cleanup package for utterance text;
+- a transport-neutral backend adapter contract for one resolved invocation attempt.
 
 ### Registry routing contract
 
@@ -59,6 +60,26 @@ Contract:
 - `CleanWithTrace` returns the exact original input, final safe cleaned text, and before/after snapshots for each rule that changed text;
 - default rules are conservative: trim/collapse whitespace, remove leading Russian Hermes wake/filler phrases, and remove trailing `пожалуйста`;
 - if non-whitespace input would be cleaned to an empty string, cleanup falls back to the trimmed/collapsed original text.
+
+### Backend adapter boundary
+
+`internal/backend` defines the execution boundary used after registry routing and speech cleanup have already produced a resolved request.
+
+Contract:
+- `Adapter.Invoke(ctx, Request)` represents exactly one backend call attempt;
+- `Request` carries transport-neutral fields such as input text, device/alias context, person/profile/model/backend IDs, model name, system prompt, and metadata;
+- `Request.Validate()` requires `Input`, `PersonID`, `ProfileID`, `ModelID`, `BackendID`, and `ModelName`;
+- `Response` supports `completed`, `accepted`, and `failed` status values, optional token usage, metadata, and a `TaskID` shape for future long-running work;
+- typed backend errors preserve `errors.Is` matching for invalid requests, unsupported backends, invocation failures, temporary failures, unauthorized failures, and context cancellation.
+
+Non-goals for this package:
+- it does not perform real Hermes HTTP or CLI invocation yet;
+- it does not load or materialize API keys/secrets;
+- cleanup, routing, and registry remain separate packages and are not imported by `internal/backend`;
+- `StatusAccepted` plus `TaskID` is only response shape compatibility, not an async task store, polling loop, or cancellation lifecycle;
+- no streaming, retries, conversation/session lifecycle, or user-facing error presentation is implemented here.
+
+A deterministic static adapter is provided only for tests and contract proof; it validates the request, respects an already-canceled context, and returns the configured response or configured error without network calls.
 
 Run tests:
 
