@@ -8,6 +8,32 @@ import (
 	"hermes-voice/internal/registry"
 )
 
+func TestResolveDefaultRoutePreservesEmptyAlias(t *testing.T) {
+	reg := loadRoutingFixture(t)
+
+	ctx, err := reg.Resolve("phone_ha", "")
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	assertRoutingResolvedIDs(t, ctx, "phone_ha", "", "sve", "default", "default_chat", "local_hermes")
+}
+
+func TestResolveDoesNotNormalizeAliases(t *testing.T) {
+	reg := loadRoutingFixture(t)
+
+	for _, alias := range []string{"Status", " status ", "STATUS"} {
+		t.Run(alias, func(t *testing.T) {
+			ctx, err := reg.Resolve("phone_ha", alias)
+			if !errors.Is(err, registry.ErrAliasNotFound) {
+				t.Fatalf("Resolve(%q) error = %v, want ErrAliasNotFound", alias, err)
+			}
+			if ctx != nil {
+				t.Fatalf("Resolve(%q) context = %#v, want nil", alias, ctx)
+			}
+		})
+	}
+}
+
 func TestResolveAliasWithOnlyProfileInheritsDefaultPerson(t *testing.T) {
 	reg := loadRoutingFixture(t)
 
