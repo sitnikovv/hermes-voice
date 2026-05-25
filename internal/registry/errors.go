@@ -16,6 +16,7 @@ var (
 	ErrMissingDefaultPerson     = errors.New("missing default person")
 	ErrMissingDefaultProfile    = errors.New("missing default profile")
 	ErrInlineSecret             = errors.New("inline secret not allowed")
+	ErrInvalidRegistry          = errors.New("invalid registry")
 )
 
 func registryError(sentinel error, format string, args ...any) error {
