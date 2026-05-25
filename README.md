@@ -81,6 +81,41 @@ Non-goals for this package:
 
 A deterministic static adapter is provided only for tests and contract proof; it validates the request, respects an already-canceled context, and returns the configured response or configured error without network calls.
 
+### Temporary dev HTTP/text client
+
+A dev-only localhost HTTP endpoint is available to exercise the current MVP flow:
+
+```text
+HTTP JSON input → registry resolve → speech cleanup → static backend response
+```
+
+This is not a production API and does not invoke real Hermes transport yet. It does not add auth, streaming, async task storage, retries, Home Assistant integration, or API key resolution.
+
+Start it with localhost defaults:
+
+```bash
+go run ./cmd/hermes-voice \
+  --registry testdata/registry.yaml \
+  --listen 127.0.0.1:8081 \
+  --static-output "static dev response"
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:8081/healthz
+```
+
+Text request example:
+
+```bash
+curl -sS http://127.0.0.1:8081/v1/dev/text \
+  -H 'content-type: application/json' \
+  -d '{"request_id":"dev-1","device_id":"phone_ha","alias":"coding","input":"гермес помоги написать тест","metadata":{"source":"curl"}}'
+```
+
+The response includes the selected route IDs, cleanup trace, static backend output, usage shape, and response metadata. It intentionally does not expose backend endpoints or `api_key_ref` values.
+
 Run tests:
 
 ```bash
