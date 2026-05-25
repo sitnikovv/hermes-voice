@@ -82,7 +82,7 @@ Non-goals for this package:
 
 A deterministic static adapter is provided only for tests and contract proof; it validates the request, respects an already-canceled context, and returns the configured response or configured error without network calls.
 
-### Fast response and accepted fallback boundary
+### Fast response, accepted fallback, and local task storage boundary
 
 `internal/dispatch` wraps a `backend.Adapter` with a small quick-response timeout.
 
@@ -91,9 +91,12 @@ Behavior:
 - if the caller context is canceled before the timeout, the context error is returned and no background task is started;
 - if the timeout fires first, the dispatcher returns `StatusAccepted` with a non-empty `task_id` and metadata `accepted_by=dispatcher`, `reason=quick_timeout`;
 - the original backend invoke may continue on a dispatcher-owned context detached from later caller cancellation;
-- the minimal `TaskRunner` is an accepted-handoff observer/registrar, not a second implicit backend invocation.
+- the dispatcher stores accepted/completed/failed lifecycle updates in the local task store when configured;
+- the minimal task store is process-local memory: no restart persistence, retention policy, cancellation, retries, or real Hermes transport yet.
 
-Goal 007 intentionally does not add task storage, a status endpoint, polling, result retrieval, retries, cancellation lifecycle, streaming, or real Hermes transport. Those remain a Goal 008+ boundary.
+`GET /v1/dev/tasks/{task_id}` exposes local dev task status/result lookup for accepted fallback tasks.
+
+Goal 008 intentionally does not add disk persistence, task listing, cancellation, retries, streaming, auth, or real Hermes transport. Those remain later boundaries.
 
 ### Temporary dev HTTP/text client
 
@@ -141,7 +144,15 @@ curl -sS http://127.0.0.1:8081/v1/dev/text \
 
 The response includes the selected route IDs, cleanup trace, static backend output, usage shape, and response metadata. It intentionally does not expose backend endpoints or `api_key_ref` values.
 
-With the accepted fallback flags above, the same HTTP endpoint still returns HTTP `200`, but the JSON backend shape contains `"status":"accepted"` and the configured `"task_id":"dev-task-1"`. There is no status/result endpoint to poll in this goal.
+With the accepted fallback flags above, the same HTTP endpoint still returns HTTP `200`, but the JSON backend shape contains `"status":"accepted"` and the configured `"task_id":"dev-task-1"`.
+
+Fetch local task status/result:
+
+```bash
+curl -sS http://127.0.0.1:8081/v1/dev/tasks/dev-task-1
+```
+
+The task endpoint returns process-local state only. Tasks are lost on process restart, there is no list endpoint, no cancellation endpoint, no retry policy, and no durable result storage yet.
 
 Run tests:
 
