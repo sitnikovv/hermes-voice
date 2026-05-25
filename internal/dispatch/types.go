@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"hermes-voice/internal/backend"
+	"hermes-voice/internal/taskstore"
 )
 
 // Task is the minimal fire-and-forget background work shape returned after a quick timeout.
@@ -27,6 +28,7 @@ type TaskIDFunc func(backend.Request) string
 type Config struct {
 	Backend      backend.Adapter
 	Runner       TaskRunner
+	Store        taskstore.Store
 	QuickTimeout time.Duration
 	TaskID       TaskIDFunc
 }
