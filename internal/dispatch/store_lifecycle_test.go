@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,64 @@ func TestStoreLifecycleQuickTimeoutCreatesAcceptedBeforeReturnAndCompletes(t *te
 	rec = waitForStoredStatus(t, store, "task-success", taskstore.StatusCompleted)
 	if rec.Response == nil || rec.Response.Output != "done" {
 		t.Fatalf("completed record = %+v, want response output", rec)
+	}
+}
+
+func TestStoreLifecycleSanitizesGeneratedTaskID(t *testing.T) {
+	store := taskstore.NewMemoryStore()
+	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(adapter.release)
+	d, err := New(Config{Backend: adapter, Store: store, QuickTimeout: time.Millisecond})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	req := validRequest()
+	req.ID = "req/with spaces"
+	resp, err := d.Invoke(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if strings.Contains(resp.TaskID, "/") || strings.Contains(resp.TaskID, " ") || resp.TaskID == "" {
+		t.Fatalf("TaskID = %q, want non-empty path-safe id", resp.TaskID)
+	}
+	if _, found, err := store.Get(context.Background(), resp.TaskID); err != nil || !found {
+		t.Fatalf("stored sanitized task found=%v err=%v", found, err)
+	}
+}
+
+func TestStoreLifecycleCreateAcceptedFailureCancelsBackendInvoke(t *testing.T) {
+	store := taskstore.NewMemoryStore()
+	if err := store.CreateAccepted(context.Background(), taskstore.Record{TaskID: "duplicate"}); err != nil {
+		t.Fatal(err)
+	}
+	adapter := observingAdapter{started: make(chan context.Context, 1), release: make(chan struct{}), done: make(chan error, 1)}
+	d, err := New(Config{Backend: adapter, Store: store, QuickTimeout: time.Millisecond, TaskID: func(backend.Request) string { return "duplicate" }})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := d.Invoke(context.Background(), validRequest()); !errors.Is(err, taskstore.ErrTaskExists) {
+		t.Fatalf("Invoke() error = %v, want ErrTaskExists", err)
+	}
+	backendCtx := <-adapter.started
+	if err := backendCtx.Err(); !errors.Is(err, context.Canceled) {
+		t.Fatalf("backend context error = %v, want canceled", err)
+	}
+}
+
+func TestStoreLifecycleBackendErrorsAreSanitized(t *testing.T) {
+	store := taskstore.NewMemoryStore()
+	adapter := blockingAdapter{started: make(chan struct{}), release: make(chan struct{}), err: errors.New("https://secret.example env:SECRET boom")}
+	d, err := New(Config{Backend: adapter, Store: store, QuickTimeout: time.Millisecond, TaskID: func(backend.Request) string { return "task-safe-error" }})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if _, err := d.Invoke(context.Background(), validRequest()); err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	close(adapter.release)
+	rec := waitForStoredStatus(t, store, "task-safe-error", taskstore.StatusFailed)
+	if rec.Error == nil || strings.Contains(rec.Error.Message, "secret") || strings.Contains(rec.Error.Message, "https://") || strings.Contains(rec.Error.Message, "env:") {
+		t.Fatalf("unsafe stored error = %+v", rec.Error)
 	}
 }
 

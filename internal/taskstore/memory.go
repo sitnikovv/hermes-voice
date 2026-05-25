@@ -66,6 +66,9 @@ func (s *MemoryStore) Complete(ctx context.Context, taskID string, resp *backend
 	if !ok {
 		return ErrTaskNotFound
 	}
+	if rec.Status != StatusAccepted {
+		return ErrInvalidTransition
+	}
 	now := time.Now()
 	rec.Status = StatusCompleted
 	rec.Response = cloneResponse(resp)
@@ -88,6 +91,9 @@ func (s *MemoryStore) Fail(ctx context.Context, taskID string, taskErr Error) er
 	rec, ok := s.records[taskID]
 	if !ok {
 		return ErrTaskNotFound
+	}
+	if rec.Status != StatusAccepted {
+		return ErrInvalidTransition
 	}
 	now := time.Now()
 	errCopy := taskErr

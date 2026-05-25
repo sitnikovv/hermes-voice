@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	"hermes-voice/internal/backend"
 	"hermes-voice/internal/taskstore"
@@ -71,7 +72,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.
 		cancelInvoke()
 		return nil, ctx.Err()
 	case <-timer.C:
-		taskID := strings.TrimSpace(d.taskID(req))
+		taskID := normalizeTaskID(d.taskID(req))
 		if taskID == "" {
 			taskID = defaultTaskID(req)
 		}
@@ -85,6 +86,7 @@ func (d *Dispatcher) Invoke(ctx context.Context, req backend.Request) (*backend.
 					"reason":      "quick_timeout",
 				},
 			}); err != nil {
+				cancelInvoke()
 				return nil, err
 			}
 			go d.storeBackendResult(context.Background(), taskID, result)
@@ -112,7 +114,7 @@ type invokeResult struct {
 func (d *Dispatcher) storeBackendResult(ctx context.Context, taskID string, result <-chan invokeResult) {
 	res := <-result
 	if res.err != nil {
-		_ = d.store.Fail(ctx, taskID, taskstore.Error{Code: "backend_error", Message: res.err.Error()})
+		_ = d.store.Fail(ctx, taskID, safeTaskError(res.err))
 		return
 	}
 	if res.resp == nil {
@@ -120,11 +122,7 @@ func (d *Dispatcher) storeBackendResult(ctx context.Context, taskID string, resu
 		return
 	}
 	if res.resp.Status == backend.StatusFailed {
-		message := res.resp.Output
-		if strings.TrimSpace(message) == "" {
-			message = "backend returned failed status"
-		}
-		_ = d.store.Fail(ctx, taskID, taskstore.Error{Code: "backend_failed", Message: message})
+		_ = d.store.Fail(ctx, taskID, taskstore.Error{Code: "backend_failed", Message: "backend returned failed status"})
 		return
 	}
 	_ = d.store.Complete(ctx, taskID, res.resp)
@@ -141,10 +139,42 @@ func cloneRequest(req backend.Request) backend.Request {
 	return cloned
 }
 
+func normalizeTaskID(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" {
+		return ""
+	}
+	return strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || unicode.IsSpace(r) {
+			return '-'
+		}
+		return r
+	}, trimmed)
+}
+
+func safeTaskError(err error) taskstore.Error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return taskstore.Error{Code: "context_canceled", Message: "backend invocation canceled"}
+	case errors.Is(err, context.DeadlineExceeded):
+		return taskstore.Error{Code: "context_deadline_exceeded", Message: "backend invocation deadline exceeded"}
+	case errors.Is(err, backend.ErrInvalidRequest):
+		return taskstore.Error{Code: "backend_invalid_request", Message: "backend request is invalid"}
+	case errors.Is(err, backend.ErrUnauthorized):
+		return taskstore.Error{Code: "backend_unauthorized", Message: "backend unauthorized"}
+	case errors.Is(err, backend.ErrTemporary):
+		return taskstore.Error{Code: "backend_temporary", Message: "backend temporarily unavailable"}
+	case errors.Is(err, backend.ErrInvocationFailed):
+		return taskstore.Error{Code: "backend_invocation_failed", Message: "backend invocation failed"}
+	default:
+		return taskstore.Error{Code: "backend_error", Message: "backend failed"}
+	}
+}
+
 func defaultTaskID(req backend.Request) string {
 	n := atomic.AddUint64(&defaultTaskCounter, 1)
-	if strings.TrimSpace(req.ID) != "" {
-		return fmt.Sprintf("%s-task-%d", req.ID, n)
+	if normalized := normalizeTaskID(req.ID); normalized != "" {
+		return fmt.Sprintf("%s-task-%d", normalized, n)
 	}
 	return fmt.Sprintf("task-%d", n)
 }

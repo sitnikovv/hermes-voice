@@ -71,6 +71,37 @@ func TestMemoryStoreFailTransitionsAcceptedToFailed(t *testing.T) {
 	}
 }
 
+func TestMemoryStoreRejectsTerminalStateOverwrite(t *testing.T) {
+	store := NewMemoryStore()
+	if err := store.CreateAccepted(context.Background(), Record{TaskID: "task-completed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(context.Background(), "task-completed", &backend.Response{Status: backend.StatusCompleted, Output: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Fail(context.Background(), "task-completed", Error{Code: "late", Message: "late"}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Fail terminal error = %v, want ErrInvalidTransition", err)
+	}
+	completed, _, _ := store.Get(context.Background(), "task-completed")
+	if completed.Status != StatusCompleted || completed.Response.Output != "first" {
+		t.Fatalf("completed record overwritten: %+v", completed)
+	}
+
+	if err := store.CreateAccepted(context.Background(), Record{TaskID: "task-failed"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Fail(context.Background(), "task-failed", Error{Code: "first", Message: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Complete(context.Background(), "task-failed", &backend.Response{Status: backend.StatusCompleted}); !errors.Is(err, ErrInvalidTransition) {
+		t.Fatalf("Complete terminal error = %v, want ErrInvalidTransition", err)
+	}
+	failed, _, _ := store.Get(context.Background(), "task-failed")
+	if failed.Status != StatusFailed || failed.Error.Code != "first" {
+		t.Fatalf("failed record overwritten: %+v", failed)
+	}
+}
+
 func TestMemoryStoreUnknownOperations(t *testing.T) {
 	store := NewMemoryStore()
 	if _, found, err := store.Get(context.Background(), "missing"); err != nil || found {

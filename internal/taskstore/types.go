@@ -42,8 +42,9 @@ type Store interface {
 }
 
 var (
-	ErrInvalidTaskID   = errors.New("taskstore: invalid task id")
-	ErrTaskExists      = errors.New("taskstore: task exists")
-	ErrTaskNotFound    = errors.New("taskstore: task not found")
-	ErrInvalidResponse = errors.New("taskstore: invalid response")
+	ErrInvalidTaskID     = errors.New("taskstore: invalid task id")
+	ErrTaskExists        = errors.New("taskstore: task exists")
+	ErrTaskNotFound      = errors.New("taskstore: task not found")
+	ErrInvalidResponse   = errors.New("taskstore: invalid response")
+	ErrInvalidTransition = errors.New("taskstore: invalid transition")
 )
