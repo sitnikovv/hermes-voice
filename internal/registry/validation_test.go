@@ -207,6 +207,71 @@ func TestValidateAggregatesIndependentIssues(t *testing.T) {
 	}
 }
 
+func TestValidateReferencesAndRouteConsistency(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*registry.Registry)
+		path   string
+		code   string
+	}{
+		{name: "model backend", mutate: func(reg *registry.Registry) {
+			m := reg.Models["default_chat"]
+			m.Backend = "missing_backend"
+			reg.Models["default_chat"] = m
+		}, path: "models.default_chat.backend", code: "missing_reference"},
+		{name: "profile person", mutate: func(reg *registry.Registry) {
+			p := reg.Profiles["default"]
+			p.Person = "missing_person"
+			reg.Profiles["default"] = p
+		}, path: "profiles.default.person", code: "missing_reference"},
+		{name: "profile model", mutate: func(reg *registry.Registry) {
+			p := reg.Profiles["default"]
+			p.Model = "missing_model"
+			reg.Profiles["default"] = p
+		}, path: "profiles.default.model", code: "missing_reference"},
+		{name: "device default person", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.DefaultPerson = "missing_person"
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.default_person", code: "missing_reference"},
+		{name: "device default profile", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.DefaultProfile = "missing_profile"
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.default_profile", code: "missing_reference"},
+		{name: "alias person", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.Aliases["coding"] = registry.AliasBinding{Person: "missing_person", Profile: "coding"}
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.aliases.coding.person", code: "missing_reference"},
+		{name: "alias profile", mutate: func(reg *registry.Registry) {
+			d := reg.Devices["phone_ha"]
+			d.Aliases["coding"] = registry.AliasBinding{Person: "sve", Profile: "missing_profile"}
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.aliases.coding.profile", code: "missing_reference"},
+		{name: "default person profile mismatch", mutate: func(reg *registry.Registry) {
+			reg.Persons["other"] = registry.Person{DisplayName: "Other"}
+			p := reg.Profiles["default"]
+			p.Person = "other"
+			reg.Profiles["default"] = p
+		}, path: "devices.phone_ha.default_profile", code: "incompatible_person_profile"},
+		{name: "alias person profile mismatch", mutate: func(reg *registry.Registry) {
+			reg.Persons["other"] = registry.Person{DisplayName: "Other"}
+			reg.Profiles["other_profile"] = registry.Profile{Person: "other", Model: "default_chat"}
+			d := reg.Devices["phone_ha"]
+			d.Aliases["coding"] = registry.AliasBinding{Person: "sve", Profile: "other_profile"}
+			reg.Devices["phone_ha"] = d
+		}, path: "devices.phone_ha.aliases.coding.profile", code: "incompatible_person_profile"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reg := loadFixture(t)
+			tt.mutate(reg)
+			assertValidationIssue(t, reg.Validate(), tt.path, tt.code)
+		})
+	}
+}
+
 func assertValidationIssue(t *testing.T, err error, path, code string) {
 	t.Helper()
 	issues := validationIssues(t, err)

@@ -50,6 +50,8 @@ func (r *Registry) Validate() error {
 		validateTopLevelID(addIssue, base, id)
 		if model.Backend == "" {
 			addIssue(base+".backend", "missing_required", "backend is required")
+		} else if _, ok := r.Backends[model.Backend]; !ok {
+			addIssue(base+".backend", "missing_reference", "backend reference not found")
 		}
 		if model.Name == "" {
 			addIssue(base+".name", "missing_required", "name is required")
@@ -67,22 +69,39 @@ func (r *Registry) Validate() error {
 		validateTopLevelID(addIssue, base, id)
 		if profile.Person == "" {
 			addIssue(base+".person", "missing_required", "person is required")
+		} else if _, ok := r.Persons[profile.Person]; !ok {
+			addIssue(base+".person", "missing_reference", "person reference not found")
 		}
 		if profile.Model == "" {
 			addIssue(base+".model", "missing_required", "model is required")
+		} else if _, ok := r.Models[profile.Model]; !ok {
+			addIssue(base+".model", "missing_reference", "model reference not found")
 		}
 	}
 	for id, device := range r.Devices {
 		base := "devices." + id
 		validateTopLevelID(addIssue, base, id)
+		defaultPersonOK := false
+		defaultProfileOK := false
 		if device.Label == "" {
 			addIssue(base+".label", "missing_required", "label is required")
 		}
 		if device.DefaultPerson == "" {
 			addIssue(base+".default_person", "missing_required", "default_person is required")
+		} else if _, ok := r.Persons[device.DefaultPerson]; !ok {
+			addIssue(base+".default_person", "missing_reference", "default_person reference not found")
+		} else {
+			defaultPersonOK = true
 		}
 		if device.DefaultProfile == "" {
 			addIssue(base+".default_profile", "missing_required", "default_profile is required")
+		} else if _, ok := r.Profiles[device.DefaultProfile]; !ok {
+			addIssue(base+".default_profile", "missing_reference", "default_profile reference not found")
+		} else {
+			defaultProfileOK = true
+		}
+		if defaultPersonOK && defaultProfileOK {
+			validateRoutePersonProfile(addIssue, base+".default_profile", device.DefaultPerson, device.DefaultProfile, r.Profiles[device.DefaultProfile])
 		}
 		for alias, binding := range device.Aliases {
 			aliasPath := base + ".aliases." + alias
@@ -91,6 +110,39 @@ func (r *Registry) Validate() error {
 			}
 			if binding.Person == "" && binding.Profile == "" {
 				addIssue(aliasPath, "missing_required", "alias binding requires person or profile")
+			}
+
+			personID := device.DefaultPerson
+			personOK := defaultPersonOK
+			if binding.Person != "" {
+				personID = binding.Person
+				if _, ok := r.Persons[binding.Person]; !ok {
+					addIssue(aliasPath+".person", "missing_reference", "person reference not found")
+					personOK = false
+				} else {
+					personOK = true
+				}
+			}
+
+			profileID := device.DefaultProfile
+			profileOK := defaultProfileOK
+			var profile Profile
+			if profileOK {
+				profile = r.Profiles[profileID]
+			}
+			if binding.Profile != "" {
+				profileID = binding.Profile
+				var ok bool
+				profile, ok = r.Profiles[binding.Profile]
+				if !ok {
+					addIssue(aliasPath+".profile", "missing_reference", "profile reference not found")
+					profileOK = false
+				} else {
+					profileOK = true
+				}
+			}
+			if personOK && profileOK {
+				validateRoutePersonProfile(addIssue, aliasPath+".profile", personID, profileID, profile)
 			}
 		}
 	}
@@ -103,6 +155,12 @@ type issueAdder func(path, code, message string)
 func validateTopLevelID(addIssue issueAdder, path, id string) {
 	if !registryIDPattern.MatchString(id) {
 		addIssue(path, "invalid_id", fmt.Sprintf("id %q must match [a-z0-9][a-z0-9_-]*", id))
+	}
+}
+
+func validateRoutePersonProfile(addIssue issueAdder, path, personID, profileID string, profile Profile) {
+	if profile.Person != personID {
+		addIssue(path, "incompatible_person_profile", fmt.Sprintf("profile %q belongs to person %q, not %q", profileID, profile.Person, personID))
 	}
 }
 
