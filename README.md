@@ -23,6 +23,7 @@ The first implemented core pieces are:
   - inline secrets are rejected; use references such as `env:HERMES_API_KEY`;
 - an isolated rules-based speech cleanup package for utterance text;
 - a transport-neutral backend adapter contract for one resolved invocation attempt.
+- a dispatcher wrapper that enforces a quick-response budget and can return a minimal `accepted + task_id` fallback for slow backend work.
 
 ### Registry routing contract
 
@@ -81,6 +82,18 @@ Non-goals for this package:
 
 A deterministic static adapter is provided only for tests and contract proof; it validates the request, respects an already-canceled context, and returns the configured response or configured error without network calls.
 
+### Fast response and accepted fallback boundary
+
+`internal/dispatch` wraps a `backend.Adapter` with a small quick-response timeout.
+
+Behavior:
+- if the backend completes or fails before the timeout, the original response/error is returned unchanged;
+- if the caller context is canceled before the timeout, the context error is returned and no background task is started;
+- if the timeout fires first, the dispatcher returns `StatusAccepted` with a non-empty `task_id` and metadata `accepted_by=dispatcher`, `reason=quick_timeout`;
+- the minimal background `TaskRunner` receives the original backend request with a detached context.
+
+Goal 007 intentionally does not add task storage, a status endpoint, polling, result retrieval, retries, cancellation lifecycle, streaming, or real Hermes transport. Those remain a Goal 008+ boundary.
+
 ### Temporary dev HTTP/text client
 
 A dev-only localhost HTTP endpoint is available to exercise the current MVP flow:
@@ -100,6 +113,17 @@ go run ./cmd/hermes-voice \
   --static-output "static dev response"
 ```
 
+To demonstrate the minimal accepted fallback without real Hermes transport, delay the static backend longer than the dispatcher quick timeout:
+
+```bash
+go run ./cmd/hermes-voice \
+  --registry testdata/registry.yaml \
+  --listen 127.0.0.1:8081 \
+  --quick-timeout 10ms \
+  --static-delay 200ms \
+  --accepted-task-id dev-task-1
+```
+
 Health check:
 
 ```bash
@@ -115,6 +139,8 @@ curl -sS http://127.0.0.1:8081/v1/dev/text \
 ```
 
 The response includes the selected route IDs, cleanup trace, static backend output, usage shape, and response metadata. It intentionally does not expose backend endpoints or `api_key_ref` values.
+
+With the accepted fallback flags above, the same HTTP endpoint still returns HTTP `200`, but the JSON backend shape contains `"status":"accepted"` and the configured `"task_id":"dev-task-1"`. There is no status/result endpoint to poll in this goal.
 
 Run tests:
 
