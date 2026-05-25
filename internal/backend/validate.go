@@ -1,12 +1,6 @@
 package backend
 
-import (
-	"errors"
-	"fmt"
-)
-
-// ErrInvalidRequest indicates a backend request is missing required fields.
-var ErrInvalidRequest = errors.New("invalid backend request")
+import "fmt"
 
 // Validate rejects requests that do not contain the transport-neutral fields
 // required to attempt backend invocation.
