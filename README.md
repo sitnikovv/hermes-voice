@@ -13,13 +13,15 @@ This repository intentionally starts platform-agnostic around Home Assistant/loc
 
 ## Current MVP core
 
-The first implemented core piece is a local YAML registry package:
+The first implemented core pieces are:
 
-- schema v1 for backends, models, persons, profiles, devices, and device-local aliases;
-- strict loading and semantic validation for hand-edited YAML;
-- deterministic resolution from `device_id + optional alias` to person/profile/model/backend;
-- typed lookup and validation errors;
-- inline secrets are rejected; use references such as `env:HERMES_API_KEY`.
+- a local YAML registry package:
+  - schema v1 for backends, models, persons, profiles, devices, and device-local aliases;
+  - strict loading and semantic validation for hand-edited YAML;
+  - deterministic resolution from `device_id + optional alias` to person/profile/model/backend;
+  - typed lookup and validation errors;
+  - inline secrets are rejected; use references such as `env:HERMES_API_KEY`;
+- an isolated rules-based speech cleanup package for utterance text.
 
 ### Registry routing contract
 
@@ -45,6 +47,18 @@ Output:
 
 Precondition:
 - use registries returned by `Load` / `LoadFile`, or call `Validate` before routing manually constructed registries.
+
+### Speech cleanup boundary
+
+`internal/cleanup` provides deterministic rules-based cleanup for the recognized utterance body before future backend calls.
+
+Contract:
+- cleanup operates only on utterance text, not on registry device IDs or alias keys;
+- it is not registry or alias normalization and must not change `Registry.Resolve` matching semantics;
+- rules run in declared order and support conservative whitespace trim/collapse, prefix removal, suffix removal, and literal phrase replacement;
+- `CleanWithTrace` returns the exact original input, final safe cleaned text, and before/after snapshots for each rule that changed text;
+- default rules are conservative: trim/collapse whitespace, remove leading Russian Hermes wake/filler phrases, and remove trailing `пожалуйста`;
+- if non-whitespace input would be cleaned to an empty string, cleanup falls back to the trimmed/collapsed original text.
 
 Run tests:
 
