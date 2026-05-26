@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,37 @@ func TestBuildBackendCanEnableQuickTimeoutDispatcher(t *testing.T) {
 	}
 	if adapter == nil {
 		t.Fatal("adapter = nil, want configured dispatcher")
+	}
+}
+
+func TestBuildBackendCanUseHermesCLIBackend(t *testing.T) {
+	cfg := defaultServerConfig()
+	cfg.BackendMode = "hermes-cli"
+	cfg.HermesCommand = "/usr/local/bin/hermes"
+	cfg.HermesSource = "hermes-voice-test"
+	cfg.HermesMaxTurns = 1
+	cfg.HermesTimeout = time.Second
+	cfg.HermesMaxOutput = 1024
+	cfg.HermesPassModel = true
+	var gotName string
+	cfg.HermesCommandRun = func(ctx context.Context, name string, args ...string) (backend.CommandResult, error) {
+		gotName = name
+		return backend.CommandResult{Stdout: "session_id: session-1\nanswer from hermes\n", ExitCode: 0}, nil
+	}
+
+	adapter, err := buildBackend(cfg, taskstore.NewMemoryStore())
+	if err != nil {
+		t.Fatalf("buildBackend() error = %v", err)
+	}
+	resp, err := adapter.Invoke(nil, validBackendRequest())
+	if err != nil {
+		t.Fatalf("Invoke() error = %v", err)
+	}
+	if gotName != "/usr/local/bin/hermes" {
+		t.Fatalf("command name = %q", gotName)
+	}
+	if resp.Output != "answer from hermes" || resp.Metadata["backend"] != "hermes_cli" {
+		t.Fatalf("response = %+v, want Hermes CLI output", resp)
 	}
 }
 

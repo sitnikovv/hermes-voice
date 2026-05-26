@@ -74,13 +74,14 @@ Contract:
 - typed backend errors preserve `errors.Is` matching for invalid requests, unsupported backends, invocation failures, temporary failures, unauthorized failures, and context cancellation.
 
 Non-goals for this package:
-- it does not perform real Hermes HTTP or CLI invocation yet;
 - it does not load or materialize API keys/secrets;
 - cleanup, routing, and registry remain separate packages and are not imported by `internal/backend`;
 - `StatusAccepted` plus `TaskID` is only response shape compatibility, not an async task store, polling loop, or cancellation lifecycle;
 - no streaming, retries, conversation/session lifecycle, or user-facing error presentation is implemented here.
 
 A deterministic static adapter is provided only for tests and contract proof; it validates the request, respects an already-canceled context, and returns the configured response or configured error without network calls.
+
+A dev/MVP Hermes CLI adapter is available for real invocation through `hermes chat` in quiet non-interactive mode. It executes an argv vector directly (no shell), strips the `session_id:` line from stdout, returns the remaining final answer, bounds output size, and maps timeout/non-zero/missing-command failures to backend errors. It expects the target host/user to already have a working Hermes CLI configuration.
 
 ### Fast response, accepted fallback, and local task storage boundary
 
@@ -103,12 +104,12 @@ Goal 008 intentionally does not add disk persistence, task listing, cancellation
 A dev-only localhost HTTP endpoint is available to exercise the current MVP flow:
 
 ```text
-HTTP JSON input → registry resolve → speech cleanup → static backend response
+HTTP JSON input → registry resolve → speech cleanup → backend adapter response
 ```
 
-This is not a production API and does not invoke real Hermes transport yet. It does not add auth, streaming, async task storage, retries, Home Assistant integration, or API key resolution.
+This is not a production API. It does not add auth, streaming, durable async task storage, retries, Home Assistant packaging guarantees, or API key resolution.
 
-Start it with localhost defaults:
+Start it with static localhost defaults:
 
 ```bash
 go run ./cmd/hermes-voice \
@@ -116,6 +117,21 @@ go run ./cmd/hermes-voice \
   --listen 127.0.0.1:8081 \
   --static-output "static dev response"
 ```
+
+To run a real Hermes CLI backend on a host where `hermes chat -q ... -Q` already works:
+
+```bash
+go run ./cmd/hermes-voice \
+  --registry testdata/registry.yaml \
+  --listen 127.0.0.1:8081 \
+  --backend hermes-cli \
+  --hermes-command /home/sve/.local/bin/hermes \
+  --hermes-source hermes-voice-local-smoke \
+  --hermes-timeout 180s \
+  --hermes-max-turns 1
+```
+
+The Hermes CLI backend is dev/MVP only. It assumes the process user already has valid Hermes config/auth. It uses direct argv execution, not shell evaluation. Do not expose this dev HTTP endpoint broadly on an untrusted network.
 
 To demonstrate the minimal accepted fallback without real Hermes transport, delay the static backend longer than the dispatcher quick timeout:
 
@@ -143,7 +159,7 @@ curl -sS http://127.0.0.1:8081/v1/dev/text \
   -d '{"request_id":"dev-1","device_id":"phone_ha","alias":"coding","input":"гермес помоги написать тест","metadata":{"source":"curl"}}'
 ```
 
-The response includes the selected route IDs, cleanup trace, static backend output, usage shape, and response metadata. It intentionally does not expose backend endpoints or `api_key_ref` values.
+The response includes the selected route IDs, cleanup trace, backend output, usage shape, and response metadata. It intentionally does not expose backend endpoints or `api_key_ref` values.
 
 With the accepted fallback flags above, the same HTTP endpoint still returns HTTP `200`, but the JSON backend shape contains `"status":"accepted"` and a generated `"task_id"`.
 

@@ -22,18 +22,31 @@ type serverConfig struct {
 	RegistryBackupDir string
 	BackupRegistry    bool
 	ListenAddr        string
+	BackendMode       string
 	StaticOutput      string
 	QuickTimeout      time.Duration
 	StaticDelay       time.Duration
 	AcceptedTaskID    string
 	AllowNonLoopback  bool
+	HermesCommand     string
+	HermesSource      string
+	HermesMaxTurns    int
+	HermesTimeout     time.Duration
+	HermesMaxOutput   int
+	HermesPassModel   bool
+	HermesCommandRun  backend.CommandRunFunc
 }
 
 func defaultServerConfig() serverConfig {
 	return serverConfig{
-		RegistryPath: "testdata/registry.yaml",
-		ListenAddr:   "127.0.0.1:8081",
-		StaticOutput: "static dev response",
+		RegistryPath:    "testdata/registry.yaml",
+		ListenAddr:      "127.0.0.1:8081",
+		BackendMode:     "static",
+		StaticOutput:    "static dev response",
+		HermesCommand:   "hermes",
+		HermesSource:    "hermes-voice",
+		HermesMaxTurns:  1,
+		HermesMaxOutput: 64 * 1024,
 	}
 }
 
@@ -43,11 +56,18 @@ func parseFlags() serverConfig {
 	flag.StringVar(&cfg.RegistryBackupDir, "registry-backup-dir", cfg.RegistryBackupDir, "optional registry backup directory; default is <registry-dir>/.registry-backups")
 	flag.BoolVar(&cfg.BackupRegistry, "backup-registry", cfg.BackupRegistry, "create a registry backup and exit without starting the dev HTTP server")
 	flag.StringVar(&cfg.ListenAddr, "listen", cfg.ListenAddr, "dev HTTP listen address")
+	flag.StringVar(&cfg.BackendMode, "backend", cfg.BackendMode, "backend adapter mode: static or hermes-cli")
 	flag.StringVar(&cfg.StaticOutput, "static-output", cfg.StaticOutput, "static backend output for the dev HTTP client")
 	flag.DurationVar(&cfg.QuickTimeout, "quick-timeout", cfg.QuickTimeout, "enable dispatcher accepted fallback after this duration; 0 disables dispatcher")
 	flag.DurationVar(&cfg.StaticDelay, "static-delay", cfg.StaticDelay, "delay static backend response for dev fallback demonstration")
 	flag.StringVar(&cfg.AcceptedTaskID, "accepted-task-id", cfg.AcceptedTaskID, "optional deterministic accepted fallback task ID for dev/testing")
 	flag.BoolVar(&cfg.AllowNonLoopback, "allow-non-loopback", cfg.AllowNonLoopback, "allow dev HTTP server to listen on a non-loopback address")
+	flag.StringVar(&cfg.HermesCommand, "hermes-command", cfg.HermesCommand, "Hermes CLI command path for --backend hermes-cli")
+	flag.StringVar(&cfg.HermesSource, "hermes-source", cfg.HermesSource, "Hermes session source tag for --backend hermes-cli")
+	flag.IntVar(&cfg.HermesMaxTurns, "hermes-max-turns", cfg.HermesMaxTurns, "Hermes CLI max tool-calling turns for --backend hermes-cli")
+	flag.DurationVar(&cfg.HermesTimeout, "hermes-timeout", cfg.HermesTimeout, "Hermes CLI subprocess timeout for --backend hermes-cli; 0 disables adapter timeout")
+	flag.IntVar(&cfg.HermesMaxOutput, "hermes-max-output", cfg.HermesMaxOutput, "maximum stdout bytes accepted from Hermes CLI")
+	flag.BoolVar(&cfg.HermesPassModel, "hermes-pass-model", cfg.HermesPassModel, "pass resolved registry model name to Hermes CLI with -m")
 	flag.Parse()
 	return cfg
 }
@@ -125,12 +145,28 @@ func run(cfg serverConfig) error {
 }
 
 func buildBackend(cfg serverConfig, store taskstore.Store) (backend.Adapter, error) {
-	var adapter backend.Adapter = backend.NewStaticAdapter(backend.Response{
-		Status: backend.StatusCompleted,
-		Output: cfg.StaticOutput,
-	})
-	if cfg.StaticDelay > 0 {
-		adapter = delayedAdapter{backend: adapter, delay: cfg.StaticDelay}
+	var adapter backend.Adapter
+	switch cfg.BackendMode {
+	case "", "static":
+		adapter = backend.NewStaticAdapter(backend.Response{
+			Status: backend.StatusCompleted,
+			Output: cfg.StaticOutput,
+		})
+		if cfg.StaticDelay > 0 {
+			adapter = delayedAdapter{backend: adapter, delay: cfg.StaticDelay}
+		}
+	case "hermes-cli":
+		adapter = backend.NewHermesCLIAdapter(backend.HermesCLIConfig{
+			Command:    cfg.HermesCommand,
+			Source:     cfg.HermesSource,
+			MaxTurns:   cfg.HermesMaxTurns,
+			Timeout:    cfg.HermesTimeout,
+			MaxOutput:  cfg.HermesMaxOutput,
+			PassModel:  cfg.HermesPassModel,
+			CommandRun: cfg.HermesCommandRun,
+		})
+	default:
+		return nil, fmt.Errorf("%w: %s", backend.ErrUnsupportedBackend, cfg.BackendMode)
 	}
 	if cfg.QuickTimeout <= 0 {
 		return adapter, nil
