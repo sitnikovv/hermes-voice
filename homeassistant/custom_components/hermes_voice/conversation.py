@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Literal
+from urllib.parse import urljoin
 
 from homeassistant.components import conversation
 from homeassistant.config_entries import ConfigEntry
@@ -25,6 +28,23 @@ from .const import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+_TASK_STATUS_PHRASES = (
+    "проверь задачу",
+    "что с задачей",
+    "готова задача",
+    "результат задачи",
+)
+
+
+@dataclass(slots=True)
+class LastAcceptedTask:
+    """In-memory state for the last accepted Hermes task."""
+
+    task_id: str
+    original_text: str
+    created_at: datetime
 
 
 async def async_setup_entry(
@@ -50,6 +70,7 @@ class HermesVoiceConversationEntity(
         self.entry = entry
         self._attr_unique_id = entry.entry_id
         self._attr_name = entry.data.get(CONF_NAME, entry.title or DEFAULT_NAME)
+        self._last_accepted_task: LastAcceptedTask | None = None
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -75,7 +96,10 @@ class HermesVoiceConversationEntity(
         """Process a conversation turn."""
         speech = self.static_response
         if self.endpoint:
-            speech = await self._forward_to_hermes(user_input)
+            if self._is_task_status_request(user_input.text):
+                speech = await self._poll_last_task()
+            else:
+                speech = await self._forward_to_hermes(user_input)
 
         response = intent.IntentResponse(language=user_input.language)
         response.async_set_speech(speech)
@@ -141,9 +165,62 @@ class HermesVoiceConversationEntity(
             return output or "Hermes Voice вернул пустой ответ."
         if status == "accepted":
             if task_id:
-                return f"Задача принята в работу. Идентификатор: {task_id}."
+                self._last_accepted_task = LastAcceptedTask(
+                    task_id=task_id,
+                    original_text=user_input.text,
+                    created_at=datetime.now(UTC),
+                )
+                return "Задача принята в работу. Позже скажите: проверь задачу."
             return "Задача принята в работу."
         if status == "failed":
             return output or "Hermes Voice сообщил о неуспешном выполнении."
 
         return output or f"Hermes Voice вернул неизвестный статус: {status}."
+
+    def _is_task_status_request(self, text: str) -> bool:
+        """Return true when the user asks for the last accepted task result."""
+        normalized = " ".join(text.casefold().split())
+        return any(phrase in normalized for phrase in _TASK_STATUS_PHRASES)
+
+    def _task_url(self, task_id: str) -> str:
+        """Build task status URL from the configured text endpoint."""
+        endpoint = self.endpoint or ""
+        base = endpoint.rsplit("/v1/dev/text", 1)[0]
+        if base == endpoint:
+            base = endpoint.rstrip("/")
+        return urljoin(f"{base}/", f"v1/dev/tasks/{task_id}")
+
+    async def _poll_last_task(self) -> str:
+        """Poll the last accepted task and map its state to speech."""
+        task = self._last_accepted_task
+        if task is None:
+            return "У меня нет ожидающей задачи."
+
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(self._task_url(task.task_id), timeout=20) as resp:
+                data = await resp.json(content_type=None)
+        except Exception as err:  # noqa: BLE001 - HA should speak a safe fallback.
+            _LOGGER.exception("Error polling Hermes Voice task %s", task.task_id)
+            return f"Не удалось проверить задачу: {err}"
+
+        if "error" in data:
+            message = data.get("error", {}).get("message") or "unknown error"
+            self._last_accepted_task = None
+            return f"Задача недоступна: {message}"
+
+        status = data.get("status")
+        if status == "accepted":
+            return "Задача ещё выполняется."
+
+        self._last_accepted_task = None
+        if status == "completed":
+            response = data.get("response") or {}
+            output = response.get("output") or ""
+            return output or "Задача завершилась, но результат пустой."
+        if status == "failed":
+            err = data.get("error") or {}
+            message = err.get("message") or "Hermes Voice сообщил о неуспешном выполнении."
+            return f"Задача завершилась с ошибкой: {message}"
+
+        return f"Hermes Voice вернул неизвестный статус задачи: {status}."
