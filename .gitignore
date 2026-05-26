@@ -12,6 +12,8 @@ build/
 coverage/
 *.log
 *.tmp
+__pycache__/
+*.py[cod]
 .hermes/dev-voice/
 
 # editors
