@@ -133,6 +133,18 @@ go run ./cmd/hermes-voice \
 
 The Hermes CLI backend is dev/MVP only. It assumes the process user already has valid Hermes config/auth. It uses direct argv execution, not shell evaluation. Do not expose this dev HTTP endpoint broadly on an untrusted network.
 
+### Dev voice lifecycle scripts
+
+For the current WSL + Orange Pi dev topology, use:
+
+```bash
+./scripts/dev-voice-up
+./scripts/dev-voice-status
+./scripts/dev-voice-down
+```
+
+`dev-voice-up` builds/deploys the linux/arm64 edge binary, starts the WSL central backend, starts the Orange Pi forwarder, and runs a smoke check. State and logs live under `.hermes/dev-voice/`.
+
 ### Edge forwarder mode
 
 For development with one central backend and one or more Home Assistant / voice nodes, run a lightweight forwarder near HA:

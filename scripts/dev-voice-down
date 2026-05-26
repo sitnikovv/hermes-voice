@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-voice-lib.sh"
+
+stop_central() {
+  if [[ -f "$CENTRAL_PID_FILE" ]]; then
+    local pid
+    pid="$(cat "$CENTRAL_PID_FILE" 2>/dev/null || true)"
+    if is_pid_alive "$pid"; then
+      echo "Stopping central backend pid=$pid"
+      kill "$pid" || true
+      sleep 1
+      if is_pid_alive "$pid"; then
+        kill -9 "$pid" || true
+      fi
+    fi
+    rm -f "$CENTRAL_PID_FILE"
+  fi
+
+  # Also clean up stale central processes started manually before pid tracking.
+  local stale
+  stale="$(pgrep -f 'go run ./cmd/hermes-voice .*--listen .*18081|/hermes-voice .*--listen .*18081' || true)"
+  if [[ -n "$stale" ]]; then
+    echo "Stopping stale central processes: $stale"
+    # shellcheck disable=SC2086
+    kill $stale 2>/dev/null || true
+    sleep 1
+    stale="$(pgrep -f 'go run ./cmd/hermes-voice .*--listen .*18081|/hermes-voice .*--listen .*18081' || true)"
+    if [[ -n "$stale" ]]; then
+      # shellcheck disable=SC2086
+      kill -9 $stale 2>/dev/null || true
+    fi
+  fi
+}
+
+stop_edge() {
+  echo "Stopping edge forwarder on $EDGE_HOST"
+  ssh_edge "if [ -f /tmp/hermes-voice-forwarder.pid ]; then pid=\$(cat /tmp/hermes-voice-forwarder.pid); kill \"\$pid\" 2>/dev/null || true; rm -f /tmp/hermes-voice-forwarder.pid; fi; pkill -f '^$EDGE_BINARY --mode forwarder' 2>/dev/null || true; true" || true
+  rm -f "$EDGE_PID_FILE"
+}
+
+stop_edge
+stop_central
+
+echo "dev voice stopped"

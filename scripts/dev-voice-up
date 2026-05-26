@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-voice-lib.sh"
+
+"$ROOT/scripts/dev-voice-down" >/dev/null 2>&1 || true
+"$ROOT/scripts/dev-voice-build-edge"
+
+cd "$ROOT"
+echo "Starting central backend on $CENTRAL_LISTEN"
+{
+  echo "--- central start $(date -Iseconds) ---"
+  PATH="$(dirname "$GO_BIN"):$PATH" exec "$GO_BIN" run ./cmd/hermes-voice \
+    --registry testdata/registry.yaml \
+    --listen "$CENTRAL_LISTEN" \
+    --allow-non-loopback \
+    --backend hermes-cli \
+    --hermes-command "$HERMES_BIN" \
+    --hermes-source "$CENTRAL_SOURCE" \
+    --hermes-timeout "$CENTRAL_HERMES_TIMEOUT" \
+    --hermes-max-turns "$CENTRAL_MAX_TURNS" \
+    --quick-timeout "$CENTRAL_QUICK_TIMEOUT"
+} >>"$CENTRAL_LOG" 2>&1 &
+echo $! >"$CENTRAL_PID_FILE"
+
+if ! wait_http_ok "$CENTRAL_LOCAL_URL/healthz" 30; then
+  echo "central backend did not become healthy; log:" >&2
+  tail -80 "$CENTRAL_LOG" >&2 || true
+  exit 1
+fi
+
+echo "Central local health OK: $CENTRAL_LOCAL_URL/healthz"
+if curl -fsS --connect-timeout 3 "$CENTRAL_LAN_URL/healthz" >/dev/null; then
+  echo "Central LAN health OK: $CENTRAL_LAN_URL/healthz"
+else
+  echo "WARN: central LAN health failed: $CENTRAL_LAN_URL/healthz" >&2
+  echo "Check Windows portproxy/firewall and current WSL eth0 IP." >&2
+fi
+
+echo "Starting edge forwarder on $EDGE_HOST $EDGE_LISTEN -> $EDGE_UPSTREAM"
+ssh_edge "if [ -f /tmp/hermes-voice-forwarder.pid ]; then old=\$(cat /tmp/hermes-voice-forwarder.pid); kill \"\$old\" 2>/dev/null || true; rm -f /tmp/hermes-voice-forwarder.pid; fi; pkill -f '^$EDGE_BINARY --mode forwarder' 2>/dev/null || true; nohup '$EDGE_BINARY' --mode forwarder --listen '$EDGE_LISTEN' --forwarder-upstream '$EDGE_UPSTREAM' --forwarder-edge-id '$EDGE_ID' --forwarder-edge-room '$EDGE_ROOM' --forwarder-device-id '$EDGE_DEVICE_ID' --forwarder-timeout '$EDGE_TIMEOUT' >/tmp/hermes-voice-forwarder.log 2>&1 & echo \$! >/tmp/hermes-voice-forwarder.pid; true"
+ssh_edge "cat /tmp/hermes-voice-forwarder.pid" >"$EDGE_PID_FILE" || true
+
+if ! ssh_edge "for i in \$(seq 1 20); do curl -fsS --connect-timeout 2 '$EDGE_LOCAL_URL/healthz' >/dev/null && exit 0; sleep 1; done; exit 1"; then
+  echo "edge forwarder did not become healthy; remote log:" >&2
+  ssh_edge "tail -80 /tmp/hermes-voice-forwarder.log 2>/dev/null || true" >&2 || true
+  exit 1
+fi
+
+echo "Edge health OK: $EDGE_HOST $EDGE_LOCAL_URL/healthz"
+"$ROOT/scripts/dev-voice-status"

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-voice-lib.sh"
+
+cd "$ROOT"
+echo "Building linux/arm64 edge binary: $EDGE_BINARY_LOCAL"
+PATH="$(dirname "$GO_BIN"):$PATH" GOOS=linux GOARCH=arm64 CGO_ENABLED=0 "$GO_BIN" build -o "$EDGE_BINARY_LOCAL" ./cmd/hermes-voice
+file "$EDGE_BINARY_LOCAL"
+echo "Deploying to $EDGE_HOST:$EDGE_BINARY"
+scp_edge "$EDGE_BINARY_LOCAL" "$EDGE_HOST:$EDGE_BINARY"
+ssh_edge "chmod +x '$EDGE_BINARY' && '$EDGE_BINARY' --help >/dev/null"
+echo "Edge binary deployed: $EDGE_HOST:$EDGE_BINARY"

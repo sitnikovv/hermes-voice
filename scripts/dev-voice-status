@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/dev-voice-lib.sh"
+
+ok=0
+fail=0
+
+check() {
+  local name="$1"
+  shift
+  if "$@"; then
+    printf 'OK   %s\n' "$name"
+    ok=$((ok+1))
+  else
+    printf 'FAIL %s\n' "$name"
+    fail=$((fail+1))
+  fi
+}
+
+print_config
+
+echo
+if [[ -f "$CENTRAL_PID_FILE" ]]; then
+  central_pid="$(cat "$CENTRAL_PID_FILE" 2>/dev/null || true)"
+else
+  central_pid=""
+fi
+if [[ -n "$central_pid" ]] && is_pid_alive "$central_pid"; then
+  echo "central_pid=$central_pid alive"
+else
+  echo "central_pid=${central_pid:-none} not-tracked-or-dead"
+fi
+
+check "central local health" curl -fsS --connect-timeout 2 "$CENTRAL_LOCAL_URL/healthz"
+check "central LAN health" curl -fsS --connect-timeout 3 "$CENTRAL_LAN_URL/healthz"
+check "edge ssh reachable" ssh_edge "true"
+check "edge forwarder health" ssh_edge "curl -fsS --connect-timeout 2 '$EDGE_LOCAL_URL/healthz' >/dev/null"
+check "edge local port owner" ssh_edge "ss -ltnp 2>/dev/null | grep -q ':8081'"
+
+smoke_payload='{"request_id":"dev-voice-status-smoke","alias":"coding","input":"Ответь ровно одним словом: статус"}'
+if smoke_out="$(ssh_edge "curl -sS --connect-timeout 5 -m 40 -X POST '$EDGE_LOCAL_URL/v1/dev/text' -H 'content-type: application/json' --data '$smoke_payload'" 2>/dev/null)"; then
+  echo "edge smoke response: $smoke_out"
+  if printf '%s' "$smoke_out" | grep -q '"status":"completed"'; then
+    echo "OK   edge smoke completed"
+    ok=$((ok+1))
+  else
+    echo "FAIL edge smoke completed"
+    fail=$((fail+1))
+  fi
+else
+  echo "FAIL edge smoke request"
+  fail=$((fail+1))
+fi
+
+echo
+if [[ -f "$CENTRAL_LOG" ]]; then
+  echo "central log: $CENTRAL_LOG"
+  tail -5 "$CENTRAL_LOG" || true
+fi
+if ssh_edge "test -f /tmp/hermes-voice-forwarder.log" >/dev/null 2>&1; then
+  echo "edge log: $EDGE_HOST:/tmp/hermes-voice-forwarder.log"
+  ssh_edge "tail -5 /tmp/hermes-voice-forwarder.log" || true
+fi
+
+echo
+printf 'summary: ok=%d fail=%d\n' "$ok" "$fail"
+[[ "$fail" -eq 0 ]]
