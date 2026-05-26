@@ -117,6 +117,51 @@ func TestDevHandlerStaticDelayLongerThanQuickTimeoutStoresAcceptedTask(t *testin
 	}
 }
 
+func TestDevHandlerQuickTimeoutGeneratesDistinctTaskIDsByDefault(t *testing.T) {
+	cfg := defaultServerConfig()
+	cfg.QuickTimeout = time.Millisecond
+	cfg.StaticDelay = 50 * time.Millisecond
+	store := taskstore.NewMemoryStore()
+	adapter, err := buildBackend(cfg, store)
+	if err != nil {
+		t.Fatalf("buildBackend() error = %v", err)
+	}
+	reg, err := registry.LoadFile("../../testdata/registry.yaml")
+	if err != nil {
+		t.Fatalf("LoadFile() error = %v", err)
+	}
+	cleaner, err := cleanup.New(cleanup.DefaultRules())
+	if err != nil {
+		t.Fatalf("cleanup.New() error = %v", err)
+	}
+	handler := devclient.NewHandler(devclient.HandlerConfig{Registry: reg, Cleaner: cleaner, Backend: adapter, TaskStore: store})
+
+	taskIDs := make([]string, 0, 2)
+	for _, requestID := range []string{"dev-live-a", "dev-live-b"} {
+		req := httptest.NewRequest(http.MethodPost, "/v1/dev/text", strings.NewReader(`{"request_id":"`+requestID+`","device_id":"phone_ha","input":"hello"}`))
+		req.Header.Set("content-type", "application/json")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d body = %s", w.Code, w.Body.String())
+		}
+		var payload struct {
+			Status string `json:"status"`
+			TaskID string `json:"task_id"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		if payload.Status != string(backend.StatusAccepted) || payload.TaskID == "" {
+			t.Fatalf("payload = %+v, want accepted with generated task ID", payload)
+		}
+		taskIDs = append(taskIDs, payload.TaskID)
+	}
+	if taskIDs[0] == taskIDs[1] {
+		t.Fatalf("generated task IDs are equal: %q", taskIDs[0])
+	}
+}
+
 func TestBackupRegistryCreatesBackupAndReportsPath(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "registry.yaml")

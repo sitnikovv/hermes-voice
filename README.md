@@ -124,9 +124,10 @@ go run ./cmd/hermes-voice \
   --registry testdata/registry.yaml \
   --listen 127.0.0.1:8081 \
   --quick-timeout 10ms \
-  --static-delay 200ms \
-  --accepted-task-id dev-task-1
+  --static-delay 200ms
 ```
+
+`--accepted-task-id` is only for deterministic tests and one-shot contract demos. Do not use it for a live/dev bridge connected to Home Assistant Assist: repeated accepted requests would reuse the same task id and conflict. Live smoke checks should send two accepted requests in a row and verify they return different `task_id` values.
 
 Health check:
 
@@ -144,12 +145,14 @@ curl -sS http://127.0.0.1:8081/v1/dev/text \
 
 The response includes the selected route IDs, cleanup trace, static backend output, usage shape, and response metadata. It intentionally does not expose backend endpoints or `api_key_ref` values.
 
-With the accepted fallback flags above, the same HTTP endpoint still returns HTTP `200`, but the JSON backend shape contains `"status":"accepted"` and the configured `"task_id":"dev-task-1"`.
+With the accepted fallback flags above, the same HTTP endpoint still returns HTTP `200`, but the JSON backend shape contains `"status":"accepted"` and a generated `"task_id"`.
+
+For deterministic tests only, `--accepted-task-id dev-task-1` forces a fixed `task_id`.
 
 Fetch local task status/result:
 
 ```bash
-curl -sS http://127.0.0.1:8081/v1/dev/tasks/dev-task-1
+curl -sS http://127.0.0.1:8081/v1/dev/tasks/<task_id-from-response>
 ```
 
 The task endpoint returns process-local state only. Tasks are lost on process restart, there is no list endpoint, no cancellation endpoint, no retry policy, and no durable result storage yet.
