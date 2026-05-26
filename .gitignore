@@ -15,6 +15,7 @@ coverage/
 __pycache__/
 *.py[cod]
 .hermes/dev-voice/
+.hermes/dev-stt-server/
 
 # editors
 .idea/
