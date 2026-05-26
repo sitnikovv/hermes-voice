@@ -147,7 +147,7 @@ class HermesVoiceConversationEntity(
         }
 
         try:
-            async with session.post(self.endpoint, json=payload, timeout=20) as resp:
+            async with session.post(self.endpoint, json=payload, timeout=75) as resp:
                 data = await resp.json(content_type=None)
         except Exception as err:  # noqa: BLE001 - HA should speak a safe fallback.
             _LOGGER.exception("Error calling Hermes Voice endpoint")
@@ -205,7 +205,7 @@ class HermesVoiceConversationEntity(
 
         session = async_get_clientsession(self.hass)
         try:
-            async with session.get(self._task_url(task.task_id), timeout=20) as resp:
+            async with session.get(self._task_url(task.task_id), timeout=75) as resp:
                 data = await resp.json(content_type=None)
         except Exception as err:  # noqa: BLE001 - HA should speak a safe fallback.
             _LOGGER.exception("Error polling Hermes Voice task %s", task.task_id)
