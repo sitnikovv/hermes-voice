@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
 from urllib.parse import urljoin
 
-from homeassistant.components import conversation
+from homeassistant.components import conversation, persistent_notification
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_NAME, MATCH_ALL
 from homeassistant.core import HomeAssistant
@@ -36,11 +38,22 @@ _TASK_STATUS_PHRASES = (
     "готова задача",
     "результат задачи",
 )
+_POLL_INTERVAL_SECONDS = 5
+_NOTIFICATION_PREFIX = "hermes_voice_task_"
 
 
 @dataclass(slots=True)
 class LastAcceptedTask:
     """In-memory state for the last accepted Hermes task."""
+
+    task_id: str
+    original_text: str
+    created_at: datetime
+
+
+@dataclass(slots=True)
+class PendingTask:
+    """In-memory pending task state for automatic delivery."""
 
     task_id: str
     original_text: str
@@ -71,6 +84,8 @@ class HermesVoiceConversationEntity(
         self._attr_unique_id = entry.entry_id
         self._attr_name = entry.data.get(CONF_NAME, entry.title or DEFAULT_NAME)
         self._last_accepted_task: LastAcceptedTask | None = None
+        self._pending_tasks: dict[str, PendingTask] = {}
+        self._delivery_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def supported_languages(self) -> list[str] | Literal["*"]:
@@ -85,6 +100,12 @@ class HermesVoiceConversationEntity(
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister this entity as a conversation agent."""
+        for task in list(self._delivery_tasks):
+            task.cancel()
+        for task in list(self._delivery_tasks):
+            with suppress(asyncio.CancelledError):
+                await task
+        self._delivery_tasks.clear()
         conversation.async_unset_agent(self.hass, self.entry)
         await super().async_will_remove_from_hass()
 
@@ -153,8 +174,9 @@ class HermesVoiceConversationEntity(
             _LOGGER.exception("Error calling Hermes Voice endpoint")
             return f"Hermes Voice недоступен: {err}"
 
-        if "error" in data:
-            message = data.get("error", {}).get("message") or "unknown error"
+        err_data = data.get("error")
+        if isinstance(err_data, dict):
+            message = err_data.get("message") or "unknown error"
             return f"Hermes Voice вернул ошибку: {message}"
 
         status = data.get("status")
@@ -165,12 +187,14 @@ class HermesVoiceConversationEntity(
             return output or "Hermes Voice вернул пустой ответ."
         if status == "accepted":
             if task_id:
-                self._last_accepted_task = LastAcceptedTask(
+                task = LastAcceptedTask(
                     task_id=task_id,
                     original_text=user_input.text,
                     created_at=datetime.now(UTC),
                 )
-                return "Задача принята в работу. Позже скажите: проверь задачу."
+                self._last_accepted_task = task
+                self._enqueue_pending_task(task)
+                return "Задача принята в работу. Я сообщу, когда будет готово."
             return "Задача принята в работу."
         if status == "failed":
             return output or "Hermes Voice сообщил о неуспешном выполнении."
@@ -219,9 +243,10 @@ class HermesVoiceConversationEntity(
 
         status = data.get("status")
         if status == "accepted":
-            return "Задача ещё выполняется."
+            return "Задача ещё выполняется. Я сообщу, когда будет готово."
 
         self._last_accepted_task = None
+        self._pending_tasks.pop(task.task_id, None)
         if status == "completed":
             response = data.get("response") or {}
             output = response.get("output") or ""
@@ -232,3 +257,97 @@ class HermesVoiceConversationEntity(
             return f"Задача завершилась с ошибкой: {message}"
 
         return f"Hermes Voice вернул неизвестный статус задачи: {status}."
+
+    def _enqueue_pending_task(self, task: LastAcceptedTask) -> None:
+        """Add an accepted task to the automatic delivery queue."""
+        pending = PendingTask(
+            task_id=task.task_id,
+            original_text=task.original_text,
+            created_at=task.created_at,
+        )
+        self._pending_tasks[task.task_id] = pending
+        delivery_task = self.hass.async_create_background_task(
+            self._deliver_pending_task_when_ready(pending),
+            f"Hermes Voice task delivery {task.task_id}",
+        )
+        self._delivery_tasks.add(delivery_task)
+        delivery_task.add_done_callback(self._delivery_tasks.discard)
+        _LOGGER.info("Queued Hermes Voice task %s for automatic delivery", task.task_id)
+
+    async def _deliver_pending_task_when_ready(self, task: PendingTask) -> None:
+        """Poll one accepted task until it finishes and then create a notification."""
+        while task.task_id in self._pending_tasks:
+            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+            try:
+                await self._poll_pending_task_for_notification(task)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - keep delivery task alive across transient errors.
+                _LOGGER.exception("Error delivering Hermes Voice task %s", task.task_id)
+
+    async def _poll_pending_task_for_notification(self, task: PendingTask) -> None:
+        """Poll one pending task and create a persistent notification if complete."""
+        session = async_get_clientsession(self.hass)
+        async with session.get(self._task_url(task.task_id), timeout=75) as resp:
+            data = await resp.json(content_type=None)
+
+        err_data = data.get("error")
+        if isinstance(err_data, dict):
+            message = err_data.get("message") or "unknown error"
+            self._pending_tasks.pop(task.task_id, None)
+            self._create_task_notification(
+                task=task,
+                title="Hermes Voice: задача недоступна",
+                message=f"Задача `{task.task_id}` недоступна: {message}",
+            )
+            return
+
+        status = data.get("status")
+        if status == "accepted":
+            return
+
+        self._pending_tasks.pop(task.task_id, None)
+        if self._last_accepted_task and self._last_accepted_task.task_id == task.task_id:
+            self._last_accepted_task = None
+
+        if status == "completed":
+            response = data.get("response") or {}
+            output = response.get("output") or ""
+            self._create_task_notification(
+                task=task,
+                title="Hermes Voice: задача готова",
+                message=output or "Задача завершилась, но результат пустой.",
+            )
+            return
+
+        if status == "failed":
+            err = data.get("error") or {}
+            message = err.get("message") or "Hermes Voice сообщил о неуспешном выполнении."
+            self._create_task_notification(
+                task=task,
+                title="Hermes Voice: задача завершилась с ошибкой",
+                message=message,
+            )
+            return
+
+        _LOGGER.warning("Hermes Voice task %s returned unknown status %s", task.task_id, status)
+
+    def _create_task_notification(
+        self,
+        *,
+        task: PendingTask,
+        title: str,
+        message: str,
+    ) -> None:
+        """Create a HA persistent notification for a finished task."""
+        body = (
+            f"Исходный запрос: {task.original_text}\n\n"
+            f"Результат:\n{message}"
+        )
+        persistent_notification.async_create(
+            self.hass,
+            body,
+            title=title,
+            notification_id=f"{_NOTIFICATION_PREFIX}{task.task_id}",
+        )
+        _LOGGER.info("Created Hermes Voice notification for task %s", task.task_id)
