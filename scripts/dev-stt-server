@@ -23,7 +23,10 @@ install() {
   if [[ ! -x .venv/bin/python ]]; then
     "$UV_BIN" venv --python "$PYTHON_BIN" .venv
   fi
-  "$UV_BIN" pip install --python .venv 'wyoming-faster-whisper==3.1.0'
+  "$UV_BIN" pip install --python .venv \
+    'wyoming-faster-whisper==3.1.0' \
+    'nvidia-cublas-cu12' \
+    'nvidia-cudnn-cu12'
 }
 
 is_alive() {
@@ -39,8 +42,10 @@ start() {
   fi
   pkill -f "wyoming-faster-whisper .*tcp://0.0.0.0:$PORT" 2>/dev/null || true
   cd "$INSTALL_DIR"
+  cuda_libs="$INSTALL_DIR/.venv/lib/python3.11/site-packages/nvidia/cublas/lib:$INSTALL_DIR/.venv/lib/python3.11/site-packages/nvidia/cudnn/lib:$INSTALL_DIR/.venv/lib/python3.11/site-packages/nvidia/cuda_nvrtc/lib"
   {
     echo "--- server STT start $(date -Is) ---"
+    export LD_LIBRARY_PATH="$cuda_libs:${LD_LIBRARY_PATH:-}"
     exec .venv/bin/wyoming-faster-whisper \
       --uri "tcp://0.0.0.0:$PORT" \
       --model "$MODEL" \
