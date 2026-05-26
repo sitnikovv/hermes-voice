@@ -22,7 +22,7 @@ CENTRAL_LAN_URL="${CENTRAL_LAN_URL:-http://192.168.7.50:18081}"
 CENTRAL_SOURCE="${CENTRAL_SOURCE:-hermes-voice-central-dev}"
 CENTRAL_QUICK_TIMEOUT="${CENTRAL_QUICK_TIMEOUT:-15s}"
 CENTRAL_HERMES_TIMEOUT="${CENTRAL_HERMES_TIMEOUT:-180s}"
-CENTRAL_MAX_TURNS="${CENTRAL_MAX_TURNS:-1}"
+CENTRAL_MAX_TURNS="${CENTRAL_MAX_TURNS:-3}"
 
 EDGE_HOST="${EDGE_HOST:-sve@192.168.7.72}"
 EDGE_SSH_KEY="${EDGE_SSH_KEY:-/home/sve/.hermes-external-memory/software-dev-projects/hermes-voice/.private/ssh/orange-pi-3b/id_ed25519_hermes_orangepi}"

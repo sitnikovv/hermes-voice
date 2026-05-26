@@ -128,7 +128,7 @@ go run ./cmd/hermes-voice \
   --hermes-command /home/sve/.local/bin/hermes \
   --hermes-source hermes-voice-local-smoke \
   --hermes-timeout 180s \
-  --hermes-max-turns 1
+  --hermes-max-turns 3
 ```
 
 The Hermes CLI backend is dev/MVP only. It assumes the process user already has valid Hermes config/auth. It uses direct argv execution, not shell evaluation. Do not expose this dev HTTP endpoint broadly on an untrusted network.

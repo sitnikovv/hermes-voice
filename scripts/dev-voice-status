@@ -43,6 +43,15 @@ if smoke_out="$(ssh_edge "curl -sS --connect-timeout 5 -m 40 -X POST '$EDGE_LOCA
   if printf '%s' "$smoke_out" | grep -q '"status":"completed"'; then
     echo "OK   edge smoke completed"
     ok=$((ok+1))
+  elif printf '%s' "$smoke_out" | grep -q '"status":"accepted"'; then
+    task_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("task_id", ""))' <<<"$smoke_out")"
+    if [[ -n "$task_id" ]] && ssh_edge "for i in \$(seq 1 90); do r=\$(curl -sS --connect-timeout 2 '$EDGE_LOCAL_URL/v1/dev/tasks/$task_id'); echo \"\$r\" | grep -q '\"status\":\"accepted\"' || { echo \"\$r\"; exit 0; }; sleep 1; done; exit 1" | tee /tmp/dev-voice-status-task.json | grep -q '"status":"completed"'; then
+      echo "OK   edge smoke accepted then completed"
+      ok=$((ok+1))
+    else
+      echo "FAIL edge smoke accepted task completion"
+      fail=$((fail+1))
+    fi
   else
     echo "FAIL edge smoke completed"
     fail=$((fail+1))
