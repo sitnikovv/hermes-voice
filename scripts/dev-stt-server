@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="${HERMES_VOICE_STT_STATE_DIR:-$ROOT/.hermes/dev-stt-server}"
+LOG_DIR="$STATE_DIR/logs"
+PID_DIR="$STATE_DIR/pids"
+INSTALL_DIR="${HERMES_VOICE_STT_INSTALL_DIR:-/home/sve/.local/share/hermes-voice-stt-server}"
+PYTHON_BIN="${PYTHON_BIN:-/home/sve/.local/bin/python3.11}"
+UV_BIN="${UV_BIN:-/home/sve/.local/bin/uv}"
+PORT="${STT_SERVER_PORT:-10310}"
+MODEL="${STT_SERVER_MODEL:-large-v3-turbo}"
+LANGUAGE="${STT_SERVER_LANGUAGE:-ru}"
+DEVICE="${STT_SERVER_DEVICE:-cuda}"
+COMPUTE_TYPE="${STT_SERVER_COMPUTE_TYPE:-float16}"
+BEAM_SIZE="${STT_SERVER_BEAM_SIZE:-5}"
+PID_FILE="$PID_DIR/wyoming-faster-whisper.pid"
+LOG_FILE="$LOG_DIR/wyoming-faster-whisper.log"
+mkdir -p "$LOG_DIR" "$PID_DIR" "$INSTALL_DIR"
+
+install() {
+  cd "$INSTALL_DIR"
+  if [[ ! -x .venv/bin/python ]]; then
+    "$UV_BIN" venv --python "$PYTHON_BIN" .venv
+  fi
+  "$UV_BIN" pip install --python .venv 'wyoming-faster-whisper==3.1.0'
+}
+
+is_alive() {
+  local pid="${1:-}"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start() {
+  install
+  if [[ -f "$PID_FILE" ]] && is_alive "$(cat "$PID_FILE")"; then
+    echo "server STT already running pid=$(cat "$PID_FILE")"
+    return 0
+  fi
+  pkill -f "wyoming-faster-whisper .*tcp://0.0.0.0:$PORT" 2>/dev/null || true
+  cd "$INSTALL_DIR"
+  {
+    echo "--- server STT start $(date -Is) ---"
+    exec .venv/bin/wyoming-faster-whisper \
+      --uri "tcp://0.0.0.0:$PORT" \
+      --model "$MODEL" \
+      --language "$LANGUAGE" \
+      --device "$DEVICE" \
+      --compute-type "$COMPUTE_TYPE" \
+      --beam-size "$BEAM_SIZE" \
+      --vad-filter \
+      --data-dir "$INSTALL_DIR/data" \
+      --download-dir "$INSTALL_DIR/data"
+  } >>"$LOG_FILE" 2>&1 &
+  echo $! >"$PID_FILE"
+  echo "started server STT pid=$(cat "$PID_FILE") port=$PORT model=$MODEL device=$DEVICE"
+}
+
+stop() {
+  if [[ -f "$PID_FILE" ]] && is_alive "$(cat "$PID_FILE")"; then
+    kill "$(cat "$PID_FILE")" 2>/dev/null || true
+  fi
+  pkill -f "wyoming-faster-whisper .*tcp://0.0.0.0:$PORT" 2>/dev/null || true
+  rm -f "$PID_FILE"
+  echo "stopped server STT port=$PORT"
+}
+
+probe() {
+  python3 - <<PY
+import json, socket
+s=socket.create_connection(('127.0.0.1', $PORT), timeout=10)
+s.settimeout(10)
+s.sendall(json.dumps({'type':'describe','data':{}}).encode()+b'\n')
+print(s.recv(4096).decode(errors='replace'))
+s.close()
+PY
+}
+
+status() {
+  if [[ -f "$PID_FILE" ]] && is_alive "$(cat "$PID_FILE")"; then
+    echo "pid=$(cat "$PID_FILE") alive"
+  else
+    echo "pid=none/dead"
+  fi
+  ss -ltnp | grep ":$PORT" || true
+  du -sh "$INSTALL_DIR/data" 2>/dev/null || true
+  tail -20 "$LOG_FILE" 2>/dev/null || true
+}
+
+case "${1:-status}" in
+  install) install ;;
+  start) start ;;
+  stop) stop ;;
+  restart) stop; start ;;
+  probe) probe ;;
+  status) status ;;
+  *) echo "usage: $0 {install|start|stop|restart|probe|status}" >&2; exit 2 ;;
+esac
