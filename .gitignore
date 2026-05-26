@@ -12,6 +12,7 @@ build/
 coverage/
 *.log
 *.tmp
+.hermes/dev-voice/
 
 # editors
 .idea/
