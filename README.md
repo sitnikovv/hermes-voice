@@ -133,6 +133,22 @@ go run ./cmd/hermes-voice \
 
 The Hermes CLI backend is dev/MVP only. It assumes the process user already has valid Hermes config/auth. It uses direct argv execution, not shell evaluation. Do not expose this dev HTTP endpoint broadly on an untrusted network.
 
+### Edge forwarder mode
+
+For development with one central backend and one or more Home Assistant / voice nodes, run a lightweight forwarder near HA:
+
+```bash
+go run ./cmd/hermes-voice \
+  --mode forwarder \
+  --listen 127.0.0.1:8081 \
+  --forwarder-upstream http://192.168.7.10:18081 \
+  --forwarder-edge-id orange-pi-ha \
+  --forwarder-edge-room cabinet \
+  --forwarder-device-id phone_ha
+```
+
+The forwarder exposes the same local endpoints (`/healthz`, `/v1/dev/text`, `/v1/dev/tasks/{task_id}`), adds edge metadata, and forwards to the central backend. It intentionally does not perform registry routing, cleanup, Hermes invocation, or task storage.
+
 To demonstrate the minimal accepted fallback without real Hermes transport, delay the static backend longer than the dispatcher quick timeout:
 
 ```bash

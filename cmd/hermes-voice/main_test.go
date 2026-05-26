@@ -95,6 +95,35 @@ func TestBuildBackendCanUseHermesCLIBackend(t *testing.T) {
 	}
 }
 
+func TestBuildHTTPHandlerCanUseForwarderMode(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/dev/text" {
+			t.Fatalf("upstream path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"status":"completed","output":"forwarded"}`))
+	}))
+	defer upstream.Close()
+	cfg := defaultServerConfig()
+	cfg.Mode = "forwarder"
+	cfg.ForwarderUpstream = upstream.URL
+	cfg.ForwarderEdgeID = "edge-ha"
+
+	handler, err := buildHTTPHandler(cfg, taskstore.NewMemoryStore())
+	if err != nil {
+		t.Fatalf("buildHTTPHandler() error = %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/dev/text", strings.NewReader(`{"request_id":"r1","input":"hello"}`))
+	req.Header.Set("content-type", "application/json")
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "forwarded") {
+		t.Fatalf("body = %s, want forwarded upstream response", rec.Body.String())
+	}
+}
+
 func TestDevHandlerStaticDelayLongerThanQuickTimeoutStoresAcceptedTask(t *testing.T) {
 	cfg := defaultServerConfig()
 	cfg.QuickTimeout = time.Millisecond

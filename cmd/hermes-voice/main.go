@@ -13,11 +13,13 @@ import (
 	"hermes-voice/internal/cleanup"
 	"hermes-voice/internal/devclient"
 	"hermes-voice/internal/dispatch"
+	"hermes-voice/internal/forwarder"
 	"hermes-voice/internal/registry"
 	"hermes-voice/internal/taskstore"
 )
 
 type serverConfig struct {
+	Mode              string
 	RegistryPath      string
 	RegistryBackupDir string
 	BackupRegistry    bool
@@ -35,23 +37,31 @@ type serverConfig struct {
 	HermesMaxOutput   int
 	HermesPassModel   bool
 	HermesCommandRun  backend.CommandRunFunc
+	ForwarderUpstream string
+	ForwarderEdgeID   string
+	ForwarderEdgeRoom string
+	ForwarderDeviceID string
+	ForwarderTimeout  time.Duration
 }
 
 func defaultServerConfig() serverConfig {
 	return serverConfig{
-		RegistryPath:    "testdata/registry.yaml",
-		ListenAddr:      "127.0.0.1:8081",
-		BackendMode:     "static",
-		StaticOutput:    "static dev response",
-		HermesCommand:   "hermes",
-		HermesSource:    "hermes-voice",
-		HermesMaxTurns:  1,
-		HermesMaxOutput: 64 * 1024,
+		Mode:             "serve",
+		RegistryPath:     "testdata/registry.yaml",
+		ListenAddr:       "127.0.0.1:8081",
+		BackendMode:      "static",
+		StaticOutput:     "static dev response",
+		HermesCommand:    "hermes",
+		HermesSource:     "hermes-voice",
+		HermesMaxTurns:   1,
+		HermesMaxOutput:  64 * 1024,
+		ForwarderTimeout: 20 * time.Second,
 	}
 }
 
 func parseFlags() serverConfig {
 	cfg := defaultServerConfig()
+	flag.StringVar(&cfg.Mode, "mode", cfg.Mode, "runtime mode: serve or forwarder")
 	flag.StringVar(&cfg.RegistryPath, "registry", cfg.RegistryPath, "path to local registry YAML")
 	flag.StringVar(&cfg.RegistryBackupDir, "registry-backup-dir", cfg.RegistryBackupDir, "optional registry backup directory; default is <registry-dir>/.registry-backups")
 	flag.BoolVar(&cfg.BackupRegistry, "backup-registry", cfg.BackupRegistry, "create a registry backup and exit without starting the dev HTTP server")
@@ -68,6 +78,11 @@ func parseFlags() serverConfig {
 	flag.DurationVar(&cfg.HermesTimeout, "hermes-timeout", cfg.HermesTimeout, "Hermes CLI subprocess timeout for --backend hermes-cli; 0 disables adapter timeout")
 	flag.IntVar(&cfg.HermesMaxOutput, "hermes-max-output", cfg.HermesMaxOutput, "maximum stdout bytes accepted from Hermes CLI")
 	flag.BoolVar(&cfg.HermesPassModel, "hermes-pass-model", cfg.HermesPassModel, "pass resolved registry model name to Hermes CLI with -m")
+	flag.StringVar(&cfg.ForwarderUpstream, "forwarder-upstream", cfg.ForwarderUpstream, "upstream Hermes Voice base URL for --mode forwarder")
+	flag.StringVar(&cfg.ForwarderEdgeID, "forwarder-edge-id", cfg.ForwarderEdgeID, "edge identifier added by --mode forwarder")
+	flag.StringVar(&cfg.ForwarderEdgeRoom, "forwarder-edge-room", cfg.ForwarderEdgeRoom, "optional room metadata added by --mode forwarder")
+	flag.StringVar(&cfg.ForwarderDeviceID, "forwarder-device-id", cfg.ForwarderDeviceID, "default device_id used by --mode forwarder when request omits it")
+	flag.DurationVar(&cfg.ForwarderTimeout, "forwarder-timeout", cfg.ForwarderTimeout, "upstream timeout for --mode forwarder")
 	flag.Parse()
 	return cfg
 }
@@ -121,27 +136,47 @@ func run(cfg serverConfig) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
-	reg, err := registry.LoadFile(cfg.RegistryPath)
-	if err != nil {
-		return err
-	}
-	cleaner, err := cleanup.New(cleanup.DefaultRules())
-	if err != nil {
-		return err
-	}
 	store := taskstore.NewMemoryStore()
-	adapter, err := buildBackend(cfg, store)
+	handler, err := buildHTTPHandler(cfg, store)
 	if err != nil {
 		return err
 	}
-	handler := devclient.NewHandler(devclient.HandlerConfig{
-		Registry:  reg,
-		Cleaner:   cleaner,
-		Backend:   adapter,
-		TaskStore: store,
-	})
-	log.Printf("starting dev-only HTTP text client on %s", cfg.ListenAddr)
+	log.Printf("starting %s HTTP server on %s", cfg.Mode, cfg.ListenAddr)
 	return http.ListenAndServe(cfg.ListenAddr, handler)
+}
+
+func buildHTTPHandler(cfg serverConfig, store taskstore.Store) (http.Handler, error) {
+	switch cfg.Mode {
+	case "", "serve":
+		reg, err := registry.LoadFile(cfg.RegistryPath)
+		if err != nil {
+			return nil, err
+		}
+		cleaner, err := cleanup.New(cleanup.DefaultRules())
+		if err != nil {
+			return nil, err
+		}
+		adapter, err := buildBackend(cfg, store)
+		if err != nil {
+			return nil, err
+		}
+		return devclient.NewHandler(devclient.HandlerConfig{
+			Registry:  reg,
+			Cleaner:   cleaner,
+			Backend:   adapter,
+			TaskStore: store,
+		}), nil
+	case "forwarder":
+		return forwarder.NewHandler(forwarder.Config{
+			UpstreamBaseURL: cfg.ForwarderUpstream,
+			EdgeID:          cfg.ForwarderEdgeID,
+			EdgeRoom:        cfg.ForwarderEdgeRoom,
+			DefaultDeviceID: cfg.ForwarderDeviceID,
+			Timeout:         cfg.ForwarderTimeout,
+		}), nil
+	default:
+		return nil, fmt.Errorf("unsupported mode: %s", cfg.Mode)
+	}
 }
 
 func buildBackend(cfg serverConfig, store taskstore.Store) (backend.Adapter, error) {
