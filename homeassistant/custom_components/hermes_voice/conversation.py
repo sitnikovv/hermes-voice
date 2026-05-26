@@ -180,7 +180,14 @@ class HermesVoiceConversationEntity(
     def _is_task_status_request(self, text: str) -> bool:
         """Return true when the user asks for the last accepted task result."""
         normalized = " ".join(text.casefold().split())
-        return any(phrase in normalized for phrase in _TASK_STATUS_PHRASES)
+        if any(phrase in normalized for phrase in _TASK_STATUS_PHRASES):
+            return True
+        if self._last_accepted_task is None:
+            return False
+        return "задач" in normalized and any(
+            marker in normalized
+            for marker in ("провер", "готов", "результат", "статус", "что")
+        )
 
     def _task_url(self, task_id: str) -> str:
         """Build task status URL from the configured text endpoint."""
@@ -204,8 +211,9 @@ class HermesVoiceConversationEntity(
             _LOGGER.exception("Error polling Hermes Voice task %s", task.task_id)
             return f"Не удалось проверить задачу: {err}"
 
-        if "error" in data:
-            message = data.get("error", {}).get("message") or "unknown error"
+        err_data = data.get("error")
+        if isinstance(err_data, dict):
+            message = err_data.get("message") or "unknown error"
             self._last_accepted_task = None
             return f"Задача недоступна: {message}"
 
