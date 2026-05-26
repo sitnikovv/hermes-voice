@@ -1,0 +1,9 @@
+{
+  "domain": "hermes_voice",
+  "name": "Hermes Voice",
+  "codeowners": [],
+  "dependencies": ["conversation"],
+  "documentation": "https://github.com/sitnikovv/hermes-voice",
+  "iot_class": "local_push",
+  "version": "0.1.0"
+}
